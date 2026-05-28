@@ -221,7 +221,14 @@ function App() {
   const theme = isDarkMode ? darkYellowTheme : lightYellowTheme;
   const chartData = getChartData();
 
-  if (loading) return <div style={{ ...styles.centerStage, backgroundColor: theme.bg }}>Loading...</div>;
+  if (loading) {
+    return (
+      <div style={{ ...styles.centerStage, backgroundColor: theme.bg, flexDirection: 'column' }}>
+        <div style={{ ...styles.loadingSpinner, color: theme.accent, fontSize: '2rem' }}>booCash</div>
+        <div style={{ color: theme.textSecondary, marginTop: '10px' }}>Muacch 😘😘</div>
+      </div>
+    );
+  }
 
   const filteredTransactions = transactions.filter(tx => {
   const matchesSearch = tx.description?.toLowerCase().includes(searchTerm.toLowerCase()) || 

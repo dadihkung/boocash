@@ -192,17 +192,34 @@ function App() {
     if (!window.confirm('Yakin ingin menghapus transaksi ini? Saldo dompet akan disesuaikan kembali secara otomatis.')) return;
 
     try {
+      // 1. Kembalikan saldo dompet
       const wallet = wallets.find(w => w.id === tx.wallet_id);
       if (wallet) {
         const revertedBalance = parseFloat(wallet.balance) - parseFloat(tx.amount);
-        await supabase.from('wallets').update({ balance: revertedBalance }).eq('id', tx.wallet_id);
+        const { error: walletError } = await supabase
+          .from('wallets')
+          .update({ balance: revertedBalance })
+          .eq('id', tx.wallet_id);
+          
+        if (walletError) throw walletError; // Lempar error jika gagal update dompet
       }
-      await supabase.from('transactions').delete().eq('id', tx.id);
+
+      // 2. Hapus riwayat transaksi
+      const { error: txError } = await supabase
+        .from('transactions')
+        .delete()
+        .eq('id', tx.id);
+        
+      if (txError) throw txError; // Lempar error jika gagal hapus transaksi
+
       await fetchData();
+      alert('Yeay, transaksi berhasil dihapus! 🗑️✨');
     } catch (error) {
-      alert('Gagal menghapus: ' + error.message);
+      console.error("Error Detail:", error);
+      alert('Gagal menghapus: ' + (error.message || JSON.stringify(error)));
     }
   };
+
 
   // --- WISHLIST CRUD ---
   const handleSaveWishlist = async (e) => {

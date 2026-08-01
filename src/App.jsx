@@ -3,16 +3,13 @@ import { supabase } from './supabaseClient';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 
 function App() {
-  // State untuk greeting
   const [showGreeting, setShowGreeting] = useState(true);
 
-  // Effect untuk menyembunyikan greeting setelah 5 detik
   useEffect(() => {
     const timer = setTimeout(() => setShowGreeting(false), 5000);
     return () => clearTimeout(timer);
   }, []);
 
-  // PERSISTENT THEME STATE
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return localStorage.getItem('isDarkMode') === 'true';
   });
@@ -27,14 +24,17 @@ function App() {
   const [transactions, setTransactions] = useState([]);
   const [showFullHistory, setShowFullHistory] = useState(false);
   const [showTransactionModal, setShowTransactionModal] = useState(false);
-  
-  // Dashboard & Filter States
+
+  // --- STATE UNTUK EDIT SALDO (NEW) ---
+  const [showBalanceModal, setShowBalanceModal] = useState(false);
+  const [editingWallet, setEditingWallet] = useState(null);
+  const [newBalanceInput, setNewBalanceInput] = useState('');
+
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('All');
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
-  const [dashboardWalletId, setDashboardWalletId] = useState('All'); // NEW: Filter dashboard per rekening
+  const [dashboardWalletId, setDashboardWalletId] = useState('All');
 
-  // Form states untuk Transaksi Utama
   const [selectedWallet, setSelectedWallet] = useState(''); 
   const [targetWallet, setTargetWallet] = useState(''); 
   const [selectedGoal, setSelectedGoal] = useState(''); 
@@ -45,7 +45,6 @@ function App() {
   const [transactionDate, setTransactionDate] = useState(new Date().toISOString().split('T')[0]); 
   const [submitting, setSubmitting] = useState(false);
 
-  // --- STATE UNTUK CRUD WISHLIST ---
   const [showWishlistCrud, setShowWishlistCrud] = useState(false);
   const [goalIdToEdit, setGoalIdToEdit] = useState(null);
   const [wishlistItemName, setWishlistItemName] = useState('');
@@ -64,11 +63,11 @@ function App() {
       Health: '💊 Kesehatan',
       Salary: '💰 Gaji / Masukan',
       Transfer: '🔄 Transfer',
-      'Wishlist Savings': '🎯 Tabungan Wishlist'
+      'Wishlist Savings': '🎯 Tabungan Wishlist',
+      Adjustment: '⚖️ Penyesuaian Saldo' // NEW CATEGORY
     }
   };
 
-  // --- HELPER FUNCTIONS ---
   const formatThousand = (val) => {
     if (!val) return '';
     const clean = val.toString().replace(/\D/g, ''); 
@@ -85,7 +84,6 @@ function App() {
     return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
-  // NEW: Helper untuk mendapatkan badge nama wallet (Boo / Bee)
   const getWalletBadge = (id) => {
     const w = wallets.find(w => w.id === id);
     if (!w) return '';
@@ -94,7 +92,6 @@ function App() {
     return w.name;
   };
 
-  // --- DATA FETCHING ---
   async function fetchData() {
     try {
       const { data: walletData, error: wError } = await supabase.from('wallets').select('*').order('id', { ascending: true });
@@ -192,34 +189,70 @@ function App() {
     if (!window.confirm('Yakin ingin menghapus transaksi ini? Saldo dompet akan disesuaikan kembali secara otomatis.')) return;
 
     try {
-      // 1. Kembalikan saldo dompet
       const wallet = wallets.find(w => w.id === tx.wallet_id);
       if (wallet) {
         const revertedBalance = parseFloat(wallet.balance) - parseFloat(tx.amount);
-        const { error: walletError } = await supabase
-          .from('wallets')
-          .update({ balance: revertedBalance })
-          .eq('id', tx.wallet_id);
-          
-        if (walletError) throw walletError; // Lempar error jika gagal update dompet
+        const { error: walletError } = await supabase.from('wallets').update({ balance: revertedBalance }).eq('id', tx.wallet_id);
+        if (walletError) throw walletError; 
       }
-
-      // 2. Hapus riwayat transaksi
-      const { error: txError } = await supabase
-        .from('transactions')
-        .delete()
-        .eq('id', tx.id);
-        
-      if (txError) throw txError; // Lempar error jika gagal hapus transaksi
+      const { error: txError } = await supabase.from('transactions').delete().eq('id', tx.id);
+      if (txError) throw txError; 
 
       await fetchData();
       alert('Yeay, transaksi berhasil dihapus! 🗑️✨');
     } catch (error) {
-      console.error("Error Detail:", error);
       alert('Gagal menghapus: ' + (error.message || JSON.stringify(error)));
     }
   };
 
+  // --- EDIT BALANCE HANDLER (NEW) ---
+  const handleEditBalanceSubmit = async (e) => {
+    e.preventDefault();
+    if (!editingWallet) return;
+
+    const numericNewBalance = parseRawNumber(newBalanceInput);
+    const currentBalance = parseFloat(editingWallet.balance);
+    const difference = numericNewBalance - currentBalance;
+
+    if (difference === 0) {
+      setShowBalanceModal(false);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      // 1. Update the wallet balance
+      const { error: walletError } = await supabase
+        .from('wallets')
+        .update({ balance: numericNewBalance })
+        .eq('id', editingWallet.id);
+      
+      if (walletError) throw walletError;
+
+      // 2. Insert the auto-adjustment transaction
+      const { error: txError } = await supabase
+        .from('transactions')
+        .insert([{
+          wallet_id: editingWallet.id,
+          amount: difference,
+          category: 'Adjustment',
+          created_at: new Date().toISOString().split('T')[0], // Today's date
+          description: 'Penyesuaian Manual via Aplikasi'
+        }]);
+
+      if (txError) throw txError;
+
+      setShowBalanceModal(false);
+      setEditingWallet(null);
+      setNewBalanceInput('');
+      await fetchData();
+      alert('Saldo berhasil disesuaikan! ⚖️✨');
+    } catch (error) {
+      alert('Gagal menyesuaikan saldo: ' + error.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   // --- WISHLIST CRUD ---
   const handleSaveWishlist = async (e) => {
@@ -242,10 +275,9 @@ function App() {
     try { await supabase.from('savings_goals').delete().eq('id', id); await fetchData(); } catch (error) { alert('Gagal menghapus: ' + error.message); }
   };
 
-  // --- DATA CALCULATIONS (CHART & SUMMARY DENGAN FILTER DOMPET) ---
+  // --- DATA CALCULATIONS ---
   const currentYear = new Date().getFullYear();
-  
-  // Filter berdasarkan bulan, tahun, DAN dompet (jika dipilih)
+
   const dashboardTransactions = transactions.filter(tx => {
     const txDate = new Date(tx.created_at);
     const matchesMonth = (txDate.getMonth() + 1) === parseInt(selectedMonth) && txDate.getFullYear() === currentYear;
@@ -254,7 +286,8 @@ function App() {
   });
 
   const getChartData = () => {
-    const filtered = dashboardTransactions.filter(tx => tx.amount < 0 && tx.category !== 'Transfer');
+    // NEW: Exclude 'Adjustment' from the pie chart so it doesn't mess up spending analysis
+    const filtered = dashboardTransactions.filter(tx => tx.amount < 0 && tx.category !== 'Transfer' && tx.category !== 'Adjustment');
     const totals = filtered.reduce((acc, curr) => {
       acc[curr.category] = (acc[curr.category] || 0) + Math.abs(curr.amount);
       return acc;
@@ -266,7 +299,8 @@ function App() {
     let totalIncome = 0;
     let totalExpense = 0;
     dashboardTransactions.forEach(tx => {
-      if (tx.category === 'Transfer') return;
+      // NEW: Exclude 'Adjustment' from dashboard summaries
+      if (tx.category === 'Transfer' || tx.category === 'Adjustment') return;
       if (tx.amount > 0) totalIncome += tx.amount;
       if (tx.amount < 0) totalExpense += Math.abs(tx.amount);
     });
@@ -296,7 +330,6 @@ function App() {
 
   return (
     <div style={{ ...styles.appContainer, backgroundColor: theme.bg }}>
-      {/* Utility Bar */}
       <div style={styles.utilityBar}>
         <button onClick={() => setIsDarkMode(!isDarkMode)} style={{ ...styles.utilBtn, backgroundColor: theme.cardBg, color: theme.textSecondary }}>
           {isDarkMode ? '☀️ Terang' : '🌙 Gelap'}
@@ -313,9 +346,19 @@ function App() {
       <section style={styles.balanceSection}>
         {wallets.map((wallet) => (
           <div key={wallet.id} style={{ ...styles.balanceCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
-            <span style={{ ...styles.cardLabel, color: theme.textSecondary }}>
-              {wallet.name.includes('Boo') ? '🏦 Rekening Boo' : wallet.name.includes('Bee') ? '🏦 Rekening Bee' : wallet.name}
-            </span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+              <span style={{ ...styles.cardLabel, color: theme.textSecondary, marginBottom: 0 }}>
+                {wallet.name.includes('Boo') ? '🏦 Rekening Boo' : wallet.name.includes('Bee') ? '🏦 Rekening Bee' : wallet.name}
+              </span>
+              {/* NEW: Edit Balance Button */}
+              <button 
+                onClick={() => { setEditingWallet(wallet); setNewBalanceInput(formatThousand(wallet.balance)); setShowBalanceModal(true); }}
+                style={{ background: 'none', border: 'none', padding: '2px', cursor: 'pointer', fontSize: '0.85rem' }}
+                title="Edit Saldo Manual"
+              >
+                ✏️
+              </button>
+            </div>
             <span style={{ ...styles.cardAmount, color: theme.textMain }}>
               Rp {Number(wallet.balance).toLocaleString('id-ID')}
             </span>
@@ -323,12 +366,45 @@ function App() {
         ))}
       </section>
 
+      {/* MODAL EDIT SALDO (NEW) */}
+      {showBalanceModal && (
+        <div style={styles.modalOverlay}>
+          <div style={{ ...styles.modalContent, backgroundColor: theme.bg, borderColor: theme.border }}>
+            <div style={styles.modalHeader}>
+              <h2 style={{ ...styles.modalTitle, color: theme.textMain }}>Penyesuaian Saldo</h2>
+              <button onClick={() => setShowBalanceModal(false)} style={{ ...styles.closeBtn, color: theme.textSecondary }}>✕</button>
+            </div>
+            <p style={{ fontSize: '0.8rem', color: theme.textSecondary, marginBottom: '20px', lineHeight: '1.4' }}>
+              Masukkan jumlah saldo <strong>asli</strong> saat ini. Sistem akan otomatis menghitung selisihnya dan mencatatnya sebagai transaksi penyesuaian agar pembukuan tetap seimbang.
+            </p>
+            <form onSubmit={handleEditBalanceSubmit} style={styles.flexForm}>
+              <div style={styles.inputGroup}>
+                <label style={{ ...styles.label, color: theme.textSecondary }}>
+                  Saldo Baru untuk {editingWallet?.name.includes('Boo') ? 'Rekening Boo' : 'Rekening Bee'}
+                </label>
+                <div style={styles.amountInputWrapper}>
+                  <span style={{ ...styles.currencyPrefix, color: theme.textMain }}>Rp</span>
+                  <input 
+                    type="text" inputMode="numeric" 
+                    value={newBalanceInput} 
+                    onChange={(e) => setNewBalanceInput(formatThousand(e.target.value))} 
+                    style={{ ...styles.amountInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }} 
+                    required 
+                  />
+                </div>
+              </div>
+              <button type="submit" disabled={submitting} style={{ ...styles.submitBtn, backgroundColor: theme.accent, color: theme.buttonText, marginTop: '10px' }}>
+                {submitting ? 'Menyimpan...' : 'Sesuaikan Saldo'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* DASHBOARD: SUMMARY & CHART */}
       <section style={{ ...styles.card, backgroundColor: theme.cardBg, border: theme.border }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
           <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Dashboard Bulanan</h3>
-          
-          {/* NEW: Filter Bar untuk Dashboard */}
           <div style={{ display: 'flex', gap: '8px' }}>
             <select 
               value={dashboardWalletId} 
@@ -356,7 +432,6 @@ function App() {
           </div>
         </div>
 
-        {/* SUMMARY CARDS */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
           <div style={{ padding: '10px', borderRadius: '12px', backgroundColor: 'rgba(22, 163, 74, 0.1)' }}>
             <div style={{ fontSize: '0.7rem', color: theme.incomeColor, fontWeight: '700' }}>PEMASUKAN</div>
@@ -372,7 +447,6 @@ function App() {
             <div style={{ color: theme.textMain, fontWeight: '700', fontSize: '1.2rem' }}>Rp {formatThousand(monthlySummary.net)}</div>
         </div>
 
-        {/* CHART */}
         {chartData.length > 0 ? (
           <div style={{ height: '200px' }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -443,7 +517,6 @@ function App() {
             return (
               <div key={tx.id} style={{ ...styles.historyCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
                 <div style={styles.txMeta}>
-                  {/* NEW: Badge Wallet */}
                   <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '2px' }}>
                     <span style={{ ...styles.txCat, color: theme.textMain }}>{catLabel}</span>
                     <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', backgroundColor: theme.inputBg, color: theme.textSecondary, fontWeight: '700' }}>
@@ -583,7 +656,6 @@ function App() {
                 return (
                   <div key={tx.id} style={{ ...styles.historyCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
                     <div style={styles.txMeta}>
-                      {/* NEW: Badge Wallet */}
                       <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '2px' }}>
                         <span style={{ ...styles.txCat, color: theme.textMain }}>{t.cats[tx.category] || tx.category}</span>
                         <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', backgroundColor: theme.inputBg, color: theme.textSecondary, fontWeight: '700' }}>

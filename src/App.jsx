@@ -27,9 +27,12 @@ function App() {
   const [transactions, setTransactions] = useState([]);
   const [showFullHistory, setShowFullHistory] = useState(false);
   const [showTransactionModal, setShowTransactionModal] = useState(false);
+  
+  // Dashboard & Filter States
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('All');
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+  const [dashboardWalletId, setDashboardWalletId] = useState('All'); // NEW: Filter dashboard per rekening
 
   // Form states untuk Transaksi Utama
   const [selectedWallet, setSelectedWallet] = useState(''); 
@@ -80,6 +83,15 @@ function App() {
   const formatDateStr = (isoString) => {
     const d = new Date(isoString);
     return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  // NEW: Helper untuk mendapatkan badge nama wallet (Boo / Bee)
+  const getWalletBadge = (id) => {
+    const w = wallets.find(w => w.id === id);
+    if (!w) return '';
+    if (w.name.toLowerCase().includes('boo')) return '🏦 Boo';
+    if (w.name.toLowerCase().includes('bee')) return '🏦 Bee';
+    return w.name;
   };
 
   // --- DATA FETCHING ---
@@ -140,12 +152,10 @@ function App() {
         if (sourceWalletId === targetWalletId) { alert('Rekening asal dan tujuan tidak boleh sama!'); setSubmitting(false); return; }
         const sourceWallet = wallets.find(w => w.id === sourceWalletId);
         const destWallet = wallets.find(w => w.id === targetWalletId);
-        
-        // Update Balances
+
         await supabase.from('wallets').update({ balance: parseFloat(sourceWallet.balance) - numericAmount }).eq('id', sourceWalletId);
         await supabase.from('wallets').update({ balance: parseFloat(destWallet.balance) + numericAmount }).eq('id', targetWalletId);
-        
-        // IDEAL FIX: Insert 2 transactions for accurate history on both sides
+
         await supabase.from('transactions').insert([
           { wallet_id: sourceWalletId, amount: -numericAmount, category: 'Transfer', created_at: transactionDate, description: description || `Ke ${destWallet.name}` },
           { wallet_id: targetWalletId, amount: numericAmount, category: 'Transfer', created_at: transactionDate, description: description || `Dari ${sourceWallet.name}` }
@@ -154,7 +164,7 @@ function App() {
       } else {
         const finalWalletAmount = type === 'expense' ? -numericAmount : numericAmount;
         const currentWallet = wallets.find(w => w.id === sourceWalletId);
-        
+
         await supabase.from('transactions').insert([{ 
           wallet_id: sourceWalletId, 
           amount: finalWalletAmount, 
@@ -162,34 +172,31 @@ function App() {
           created_at: transactionDate, 
           description: category === 'Wishlist Savings' ? `Nabung: ${description}` : description 
         }]);
-        
+
         await supabase.from('wallets').update({ balance: parseFloat(currentWallet.balance) + finalWalletAmount }).eq('id', sourceWalletId);
-        
+
         if (category === 'Wishlist Savings' && selectedGoal) {
           const currentGoal = goals.find(g => g.id === parseInt(selectedGoal));
           await supabase.from('savings_goals').update({ current_saved: parseFloat(currentGoal.current_saved) + (type === 'expense' ? numericAmount : -numericAmount) }).eq('id', parseInt(selectedGoal));
         }
       }
-      
+
       setAmount(''); setDescription(''); setShowTransactionModal(false); 
       await fetchData(); 
       alert('Catatan berhasil ditambahkan! ✨');
     } catch (error) { alert('Gagal menyimpan: ' + error.message); } finally { setSubmitting(false); }
   };
 
-  // --- DELETE TRANSACTION (NEW IDEAL FEATURE) ---
+  // --- DELETE TRANSACTION ---
   const handleDeleteTransaction = async (tx) => {
     if (!window.confirm('Yakin ingin menghapus transaksi ini? Saldo dompet akan disesuaikan kembali secara otomatis.')) return;
-    
+
     try {
-      // Revert wallet balance
       const wallet = wallets.find(w => w.id === tx.wallet_id);
       if (wallet) {
-        // tx.amount is negative for expense, positive for income. Subtracting it reverts the effect.
         const revertedBalance = parseFloat(wallet.balance) - parseFloat(tx.amount);
         await supabase.from('wallets').update({ balance: revertedBalance }).eq('id', tx.wallet_id);
       }
-      // Delete record
       await supabase.from('transactions').delete().eq('id', tx.id);
       await fetchData();
     } catch (error) {
@@ -218,15 +225,19 @@ function App() {
     try { await supabase.from('savings_goals').delete().eq('id', id); await fetchData(); } catch (error) { alert('Gagal menghapus: ' + error.message); }
   };
 
-  // --- DATA CALCULATIONS (CHART & SUMMARY) ---
+  // --- DATA CALCULATIONS (CHART & SUMMARY DENGAN FILTER DOMPET) ---
   const currentYear = new Date().getFullYear();
-  const monthlyTransactions = transactions.filter(tx => {
+  
+  // Filter berdasarkan bulan, tahun, DAN dompet (jika dipilih)
+  const dashboardTransactions = transactions.filter(tx => {
     const txDate = new Date(tx.created_at);
-    return (txDate.getMonth() + 1) === parseInt(selectedMonth) && txDate.getFullYear() === currentYear;
+    const matchesMonth = (txDate.getMonth() + 1) === parseInt(selectedMonth) && txDate.getFullYear() === currentYear;
+    const matchesWallet = dashboardWalletId === 'All' || tx.wallet_id === parseInt(dashboardWalletId);
+    return matchesMonth && matchesWallet;
   });
 
   const getChartData = () => {
-    const filtered = monthlyTransactions.filter(tx => tx.amount < 0 && tx.category !== 'Transfer');
+    const filtered = dashboardTransactions.filter(tx => tx.amount < 0 && tx.category !== 'Transfer');
     const totals = filtered.reduce((acc, curr) => {
       acc[curr.category] = (acc[curr.category] || 0) + Math.abs(curr.amount);
       return acc;
@@ -237,7 +248,7 @@ function App() {
   const calculateMonthlySummary = () => {
     let totalIncome = 0;
     let totalExpense = 0;
-    monthlyTransactions.forEach(tx => {
+    dashboardTransactions.forEach(tx => {
       if (tx.category === 'Transfer') return;
       if (tx.amount > 0) totalIncome += tx.amount;
       if (tx.amount < 0) totalExpense += Math.abs(tx.amount);
@@ -286,7 +297,7 @@ function App() {
         {wallets.map((wallet) => (
           <div key={wallet.id} style={{ ...styles.balanceCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
             <span style={{ ...styles.cardLabel, color: theme.textSecondary }}>
-              {wallet.name === 'Boo Bank Account' ? '🏦 Rekening Boo' : wallet.name === 'Bee Bank Account' ? '🏦 Rekening Bee' : wallet.name}
+              {wallet.name.includes('Boo') ? '🏦 Rekening Boo' : wallet.name.includes('Bee') ? '🏦 Rekening Bee' : wallet.name}
             </span>
             <span style={{ ...styles.cardAmount, color: theme.textMain }}>
               Rp {Number(wallet.balance).toLocaleString('id-ID')}
@@ -297,22 +308,38 @@ function App() {
 
       {/* DASHBOARD: SUMMARY & CHART */}
       <section style={{ ...styles.card, backgroundColor: theme.cardBg, border: theme.border }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
           <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Dashboard Bulanan</h3>
-          <select 
-            value={selectedMonth} 
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            style={{ ...styles.minimalInput, width: 'auto', padding: '5px 10px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
-          >
-            {[...Array(12)].map((_, i) => (
-              <option key={i + 1} value={i + 1}>
-                {new Date(0, i).toLocaleString('id-ID', { month: 'long' })}
-              </option>
-            ))}
-          </select>
+          
+          {/* NEW: Filter Bar untuk Dashboard */}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <select 
+              value={dashboardWalletId} 
+              onChange={(e) => setDashboardWalletId(e.target.value)}
+              style={{ ...styles.minimalInput, flex: 1, padding: '6px 10px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
+            >
+              <option value="All">Semua Rekening</option>
+              {wallets.map(w => (
+                <option key={w.id} value={w.id}>
+                  {w.name.includes('Boo') ? 'Rekening Boo' : w.name.includes('Bee') ? 'Rekening Bee' : w.name}
+                </option>
+              ))}
+            </select>
+            <select 
+              value={selectedMonth} 
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              style={{ ...styles.minimalInput, width: 'auto', padding: '6px 10px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
+            >
+              {[...Array(12)].map((_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  {new Date(0, i).toLocaleString('id-ID', { month: 'long' })}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        {/* SUMMARY CARDS (NEW) */}
+        {/* SUMMARY CARDS */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
           <div style={{ padding: '10px', borderRadius: '12px', backgroundColor: 'rgba(22, 163, 74, 0.1)' }}>
             <div style={{ fontSize: '0.7rem', color: theme.incomeColor, fontWeight: '700' }}>PEMASUKAN</div>
@@ -340,7 +367,7 @@ function App() {
               </PieChart>
             </ResponsiveContainer>
           </div>
-        ) : <p style={{ textAlign: 'center', color: theme.textSecondary, fontSize: '0.9rem' }}>Belum ada pengeluaran bulan ini ✨</p>}
+        ) : <p style={{ textAlign: 'center', color: theme.textSecondary, fontSize: '0.9rem' }}>Belum ada pengeluaran di filter ini ✨</p>}
       </section>
 
       <button 
@@ -399,7 +426,13 @@ function App() {
             return (
               <div key={tx.id} style={{ ...styles.historyCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
                 <div style={styles.txMeta}>
-                  <span style={{ ...styles.txCat, color: theme.textMain }}>{catLabel}</span>
+                  {/* NEW: Badge Wallet */}
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '2px' }}>
+                    <span style={{ ...styles.txCat, color: theme.textMain }}>{catLabel}</span>
+                    <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', backgroundColor: theme.inputBg, color: theme.textSecondary, fontWeight: '700' }}>
+                      {getWalletBadge(tx.wallet_id)}
+                    </span>
+                  </div>
                   {tx.description && <span style={{ ...styles.txDesc, color: theme.textSecondary }}>{tx.description}</span>}
                   <span style={{ fontSize: '0.7rem', color: theme.textSecondary, marginTop: '2px' }}>{formatDateStr(tx.created_at)}</span>
                 </div>
@@ -434,13 +467,13 @@ function App() {
                   <div style={styles.inputGroup}>
                     <label style={{ ...styles.label, color: theme.textSecondary }}>Dari Rekening</label>
                     <select value={selectedWallet} onChange={(e) => setSelectedWallet(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}>
-                      {wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                      {wallets.map(w => <option key={w.id} value={w.id}>{w.name.includes('Boo') ? 'Rekening Boo' : w.name.includes('Bee') ? 'Rekening Bee' : w.name}</option>)}
                     </select>
                   </div>
                   <div style={styles.inputGroup}>
                     <label style={{ ...styles.label, color: theme.accent }}>Ke Rekening</label>
                     <select value={targetWallet} onChange={(e) => setTargetWallet(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.accent, color: theme.textMain }}>
-                      {wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                      {wallets.map(w => <option key={w.id} value={w.id}>{w.name.includes('Boo') ? 'Rekening Boo' : w.name.includes('Bee') ? 'Rekening Bee' : w.name}</option>)}
                     </select>
                   </div>
                 </>
@@ -449,7 +482,7 @@ function App() {
                   <div style={styles.inputGroup}>
                     <label style={{ ...styles.label, color: theme.textSecondary }}>Akun / Dompet</label>
                     <select value={selectedWallet} onChange={(e) => setSelectedWallet(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}>
-                      {wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                      {wallets.map(w => <option key={w.id} value={w.id}>{w.name.includes('Boo') ? 'Rekening Boo' : w.name.includes('Bee') ? 'Rekening Bee' : w.name}</option>)}
                     </select>
                   </div>
                   <div style={styles.inputGroup}>
@@ -471,7 +504,7 @@ function App() {
                   </div>
                 </>
               )}
-              
+
               {category === 'Wishlist Savings' && type === 'expense' && (
                 <div style={styles.inputGroup}>
                   <label style={{ ...styles.label, color: theme.accent }}>Pilih Target Wishlist</label>
@@ -533,7 +566,13 @@ function App() {
                 return (
                   <div key={tx.id} style={{ ...styles.historyCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
                     <div style={styles.txMeta}>
-                      <span style={{ ...styles.txCat, color: theme.textMain }}>{t.cats[tx.category] || tx.category}</span>
+                      {/* NEW: Badge Wallet */}
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '2px' }}>
+                        <span style={{ ...styles.txCat, color: theme.textMain }}>{t.cats[tx.category] || tx.category}</span>
+                        <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', backgroundColor: theme.inputBg, color: theme.textSecondary, fontWeight: '700' }}>
+                          {getWalletBadge(tx.wallet_id)}
+                        </span>
+                      </div>
                       {tx.description && <span style={{ ...styles.txDesc, color: theme.textSecondary }}>{tx.description}</span>}
                       <span style={{ fontSize: '0.7rem', color: theme.textSecondary, marginTop: '2px' }}>{formatDateStr(tx.created_at)}</span>
                     </div>
@@ -541,7 +580,6 @@ function App() {
                       <span style={{ ...styles.txAmount, color: isExpense ? theme.expenseColor : theme.incomeColor }}>
                         {isExpense ? '- ' : '+ '}Rp {Number(Math.abs(tx.amount)).toLocaleString('id-ID')}
                       </span>
-                      {/* NEW: Tombol hapus transaksi */}
                       <button onClick={() => handleDeleteTransaction(tx)} style={{ background: 'none', border: 'none', color: theme.expenseColor, fontSize: '0.75rem', cursor: 'pointer', padding: 0 }}>
                         🗑️ Hapus
                       </button>
@@ -580,7 +618,7 @@ function App() {
                 <button type="submit" disabled={crudSubmitting} style={{ ...styles.submitBtn, margin: 0, backgroundColor: theme.accent, color: theme.buttonText }}>{crudSubmitting ? 'Menyimpan...' : goalIdToEdit ? 'Simpan Perubahan' : 'Buat Target Baru'}</button>
               </div>
             </form>
-            
+
             <hr style={{ border: 'none', height: '1px', backgroundColor: theme.border, margin: '20px 0 14px 0' }} />
             <h4 style={{ ...styles.label, color: theme.textSecondary, marginBottom: '8px' }}>Daftar Target Aktif Kita</h4>
             <div style={styles.crudList}>

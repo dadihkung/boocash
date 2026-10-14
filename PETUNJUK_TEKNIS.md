@@ -10,6 +10,7 @@ Pastikan hal berikut sudah benar:
 - Migration `supabase/migrations/202610140001_financial_transactions.sql` sudah dijalankan di Supabase SQL Editor.
 - Untuk transfer setoran wishlist ke rekening tabungan, migration lanjutan `supabase/migrations/202610140002_wishlist_savings_transfer.sql` juga harus dijalankan.
 - Untuk mencatat setoran dana darurat sebagai transfer rekening dan progres target, jalankan juga migration `supabase/migrations/202610140003_emergency_fund_transactions.sql`.
+- Untuk membedakan uang Anda yang sedang dipegang pasangan, jalankan migration `supabase/migrations/202610140004_partner_holding_wallet.sql`. Migration ini menambahkan dompet virtual bersaldo nol dan aman dijalankan ulang.
 - Tabel `wallets` berisi dompet dengan saldo awal yang benar. Untuk memakai setoran wishlist antar-rekening, pastikan ada rekening sumber dan rekening tabungan tujuan sebagai dua baris dompet yang berbeda. BooCash tidak membuat dompet secara otomatis.
 - Setelah mengubah skema atau migration, muat ulang halaman BooCash.
 
@@ -29,6 +30,22 @@ Urutan ini cocok setelah database direset dan untuk mulai mencatat tanpa membawa
 8. **Rekonsiliasi rutin.** Seminggu sekali, bandingkan saldo BooCash dengan saldo bank. Catat transaksi yang tertinggal bila diketahui; gunakan penyesuaian saldo hanya untuk selisih yang tidak dapat dijelaskan.
 
 Jangan memasukkan saldo awal sebagai transaksi **Pemasukan**, karena itu membuat dashboard menganggap uang lama sebagai pendapatan baru. Jangan mencatat transaksi lama sekaligus memasukkan saldo rekening hari ini sebagai saldo pembuka, karena saldo serta pengeluaran akan terhitung tidak konsisten. Jika perlu merekonstruksi riwayat lampau, tentukan tanggal awal dan saldo pada tanggal tersebut terlebih dahulu; alur penyesuaian saldo aplikasi saat ini bertanggal hari ini, jadi memulai dari saldo aktual hari ini adalah pilihan paling sederhana.
+
+### Memisahkan gaji yang dititipkan ke pasangan
+
+Dompet **Titipan ke Pasangan - Dana Saya** adalah dompet virtual, bukan rekening bank baru. Saldo dompet ini menunjukkan bagian uang Anda yang masih dipegang pasangan. Jangan masukkan uang milik pasangan ke dompet ini.
+
+Jika gaji langsung dikirim ke pasangan:
+
+1. Catat gaji sebagai **Pemasukan → Gaji** ke dompet **Titipan ke Pasangan - Dana Saya** pada tanggal gaji.
+2. Setiap pasangan mengirim Rp50.000 kembali ke rekening Boo Mandiri, catat **Transfer** dari dompet virtual tersebut ke **Boo Mandiri**.
+3. Catat setiap kiriman satu kali saja. Kiriman harian adalah pengembalian/perpindahan uang Anda sendiri, bukan pemasukan baru.
+
+Contoh: gaji Rp5.000.000 masuk ke dompet virtual. Setelah kiriman Rp50.000 selama 10 hari, dompet virtual menunjukkan Rp4.500.000 dan Boo Mandiri bertambah total Rp500.000 dari transfer tersebut.
+
+Jika gaji terlebih dahulu masuk ke Boo Mandiri baru kemudian dikirim ke pasangan, catat **Pemasukan → Gaji** ke Boo Mandiri, lalu catat **Transfer** dari Boo Mandiri ke dompet virtual sebesar uang yang diserahkan. Kiriman Rp50.000 berikutnya tetap dicatat sebagai transfer dari dompet virtual ke Boo Mandiri.
+
+Untuk mulai melacak uang yang sudah lebih dulu dititipkan sebelum BooCash digunakan, tekan ikon pensil pada dompet virtual setelah migration dijalankan dan masukkan hanya sisa uang Anda yang saat ini masih dipegang pasangan. Jangan masukkan total gaji historis jika sebagian sudah dikirim kembali atau sudah digunakan. Perubahan saldo ini tercatat sebagai penyesuaian pembuka, bukan pemasukan.
 
 ## 2. Aturan dasar pencatatan
 

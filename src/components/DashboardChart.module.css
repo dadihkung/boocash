@@ -1,0 +1,42 @@
+.chart {
+  color: var(--chart-text);
+}
+
+.categories {
+  display: grid;
+  gap: 10px;
+}
+
+.categoryLine {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 0.75rem;
+}
+
+.categoryName {
+  overflow-wrap: anywhere;
+}
+
+.amount {
+  white-space: nowrap;
+}
+
+.track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--chart-track);
+}
+
+.bar {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.empty {
+  margin: 0;
+  text-align: center;
+  font-size: 0.9rem;
+}

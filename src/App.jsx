@@ -1,6 +1,33 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useEffectEvent, useMemo, useState } from 'react';
 import { supabase } from './supabaseClient';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
+import DashboardChart from './components/DashboardChart.jsx';
+import Header from './components/Header.jsx';
+import WalletList from './components/WalletList.jsx';
+
+const TRANSACTION_TYPES = Object.freeze({ EXPENSE: 'expense', INCOME: 'income', TRANSFER: 'transfer' });
+const EXPENSE_CATEGORIES = [
+  ['Food', '🍔 Makan & Minum'], ['Groceries', '🛒 Belanja Bulanan'], ['Shopping', '🛍️ Belanja & Pribadi'],
+  ['Transport', '🚗 Transportasi'], ['Bills', '🧾 Tagihan & Tempat Tinggal'], ['Entertainment', '🎬 Hiburan'],
+  ['Health', '💊 Kesehatan'], ['Education', '📚 Pendidikan'], ['Family', '👨‍👩‍👧 Keluarga'],
+  ['Travel', '✈️ Perjalanan'], ['Pets', '🐾 Hewan Peliharaan'], ['Giving', '🎁 Hadiah & Donasi'],
+  ['Business', '💼 Usaha'], ['Wishlist Savings', '🎯 Tabungan Wishlist'],
+  ['Emergency Savings', '🛟 Tabungan Dana Darurat'], ['Other', '📦 Lainnya']
+];
+const INCOME_CATEGORIES = [
+  ['Salary', '💰 Gaji'], ['Freelance Income', '🧑‍💻 Freelance'], ['Business Income', '💼 Pendapatan Usaha'],
+  ['Investment Income', '📈 Investasi'], ['Gift Income', '🎁 Hadiah'], ['Refund', '↩️ Pengembalian Dana'],
+  ['Other Income', '➕ Pemasukan Lainnya']
+];
+const CATEGORY_LABELS = Object.fromEntries([
+  ...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES, ['Transfer', '🔄 Transfer'], ['Adjustment', '⚖️ Penyesuaian Saldo']
+]);
+const PERIOD_OPTIONS = [
+  ['7days', '7 hari terakhir'], ['30days', '30 hari terakhir'], ['month', 'Bulan ini'],
+  ['year', 'Tahun ini'], ['all', 'Semua waktu'], ['custom', 'Pilih tanggal']
+];
+const dateKey = (value) => String(value || '').slice(0, 10);
+const localDateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const monthKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 
 function App() {
   const [showGreeting, setShowGreeting] = useState(true);
@@ -23,7 +50,10 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [transactions, setTransactions] = useState([]);
   const [showFullHistory, setShowFullHistory] = useState(false);
+  const [syncHistoryWithDashboard, setSyncHistoryWithDashboard] = useState(false);
   const [showTransactionModal, setShowTransactionModal] = useState(false);
+  const [toast, setToast] = useState('');
+  const [pendingDelete, setPendingDelete] = useState(null);
 
   // --- STATE UNTUK EDIT SALDO (NEW) ---
   const [showBalanceModal, setShowBalanceModal] = useState(false);
@@ -32,11 +62,23 @@ function App() {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('All');
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [dashboardWalletId, setDashboardWalletId] = useState('All');
+  const [periodFilter, setPeriodFilter] = useState('month');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+  const [budgetCategory, setBudgetCategory] = useState('Food');
+  const [budgetInput, setBudgetInput] = useState('');
+  const [budgetLimits, setBudgetLimits] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('booCashBudgets') || '{}');
+    } catch {
+      return {};
+    }
+  });
 
   const [selectedWallet, setSelectedWallet] = useState(''); 
   const [targetWallet, setTargetWallet] = useState(''); 
+  const [savingsWalletId, setSavingsWalletId] = useState('');
   const [selectedGoal, setSelectedGoal] = useState(''); 
   const [amount, setAmount] = useState(''); 
   const [type, setType] = useState('expense'); 
@@ -52,31 +94,18 @@ function App() {
   const [wishlistCurrentSaved, setWishlistCurrentSaved] = useState('');
   const [crudSubmitting, setCrudSubmitting] = useState(false);
 
-  const t = {
-    cats: { 
-      Food: '🍔 Makan & Minum', 
-      Groceries: '🛒 Belanja Bulanan',
-      Shopping: '🛍️ Jajan / Shopping', 
-      Transport: '🚗 Transportasi', 
-      Bills: '🧾 Tagihan & Kost', 
-      Entertainment: '🎬 Hiburan / Kencan',
-      Health: '💊 Kesehatan',
-      Salary: '💰 Gaji / Masukan',
-      Transfer: '🔄 Transfer',
-      'Wishlist Savings': '🎯 Tabungan Wishlist',
-      Adjustment: '⚖️ Penyesuaian Saldo' // NEW CATEGORY
-    }
-  };
+  const t = { cats: CATEGORY_LABELS };
 
   const formatThousand = (val) => {
-    if (!val) return '';
+    if (val === '' || val === null || val === undefined) return '';
     const clean = val.toString().replace(/\D/g, ''); 
+    if (!clean) return '';
     return Number(clean).toLocaleString('id-ID');
   };
 
   const parseRawNumber = (val) => {
     if (!val) return 0;
-    return parseFloat(val.toString().replace(/\./g, '')) || 0;
+    return Number(val.toString().replace(/\D/g, '')) || 0;
   };
 
   const formatDateStr = (isoString) => {
@@ -85,11 +114,9 @@ function App() {
   };
 
   const getWalletBadge = (id) => {
-    const w = wallets.find(w => w.id === id);
-    if (!w) return '';
-    if (w.name.toLowerCase().includes('boo')) return '🏦 Boo';
-    if (w.name.toLowerCase().includes('bee')) return '🏦 Bee';
-    return w.name;
+    const wallet = wallets.find((item) => item.id === id);
+    if (!wallet) return '';
+    return `${wallet.icon || '🏦'} ${wallet.display_name || wallet.name}`;
   };
 
   async function fetchData() {
@@ -101,6 +128,13 @@ function App() {
       if (walletData.length > 0) {
         if (!selectedWallet) setSelectedWallet(walletData[0].id.toString());
         if (!targetWallet && walletData[1]) setTargetWallet(walletData[1].id.toString());
+        if (!savingsWalletId) {
+          const sourceId = Number(selectedWallet || walletData[0].id);
+          const savingsWallet = walletData.find((wallet) =>
+            wallet.id !== sourceId && /blu|blue\s*bca/i.test(`${wallet.display_name || ''} ${wallet.name || ''}`)
+          ) || walletData.find((wallet) => wallet.id !== sourceId);
+          if (savingsWallet) setSavingsWalletId(savingsWallet.id.toString());
+        }
       }
 
       const { data: goalData, error: gError } = await supabase.from('savings_goals').select('*').order('id', { ascending: true });
@@ -110,13 +144,18 @@ function App() {
         setSelectedGoal(goalData[0].id.toString());
       }
 
-      const { data: txData, error: txError } = await supabase
-        .from('transactions')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(100); 
-      if (txError) throw txError;
-      setTransactions(txData || []);
+      const allTransactions = [];
+      for (let offset = 0; ; offset += 1000) {
+        const { data: txPage, error: txError } = await supabase
+          .from('transactions')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(offset, offset + 999);
+        if (txError) throw txError;
+        allTransactions.push(...(txPage || []));
+        if (!txPage || txPage.length < 1000) break;
+      }
+      setTransactions(allTransactions);
 
     } catch (error) {
       console.error('Error fetching data:', error.message);
@@ -125,83 +164,83 @@ function App() {
     }
   }
 
+  const loadInitialData = useEffectEvent(fetchData);
+
   useEffect(() => {
-    fetchData();
+    const timer = window.setTimeout(loadInitialData, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
-    if (type === 'income') setCategory('Salary');
-    else if (type === 'transfer') setCategory('Transfer');
-    else setCategory('Food');
-  }, [type]);
+    localStorage.setItem('booCashBudgets', JSON.stringify(budgetLimits));
+  }, [budgetLimits]);
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = window.setTimeout(() => setToast(''), 3500);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
 
   // --- SUBMIT TRANSACTION ---
   const handleSubmit = async (e) => {
     e.preventDefault();
     const numericAmount = parseRawNumber(amount);
-    if (numericAmount <= 0) { alert('Masukkan jumlah uang yang valid!'); return; }
+    if (numericAmount <= 0) { setToast('Masukkan jumlah uang yang valid.'); return; }
     setSubmitting(true);
     const sourceWalletId = parseInt(selectedWallet);
     const targetWalletId = parseInt(targetWallet);
 
     try {
-      if (type === 'transfer') {
-        if (sourceWalletId === targetWalletId) { alert('Rekening asal dan tujuan tidak boleh sama!'); setSubmitting(false); return; }
-        const sourceWallet = wallets.find(w => w.id === sourceWalletId);
-        const destWallet = wallets.find(w => w.id === targetWalletId);
-
-        await supabase.from('wallets').update({ balance: parseFloat(sourceWallet.balance) - numericAmount }).eq('id', sourceWalletId);
-        await supabase.from('wallets').update({ balance: parseFloat(destWallet.balance) + numericAmount }).eq('id', targetWalletId);
-
-        await supabase.from('transactions').insert([
-          { wallet_id: sourceWalletId, amount: -numericAmount, category: 'Transfer', created_at: transactionDate, description: description || `Ke ${destWallet.name}` },
-          { wallet_id: targetWalletId, amount: numericAmount, category: 'Transfer', created_at: transactionDate, description: description || `Dari ${sourceWallet.name}` }
-        ]);
-
-      } else {
-        const finalWalletAmount = type === 'expense' ? -numericAmount : numericAmount;
-        const currentWallet = wallets.find(w => w.id === sourceWalletId);
-
-        await supabase.from('transactions').insert([{ 
-          wallet_id: sourceWalletId, 
-          amount: finalWalletAmount, 
-          category, 
-          created_at: transactionDate, 
-          description: category === 'Wishlist Savings' ? `Nabung: ${description}` : description 
-        }]);
-
-        await supabase.from('wallets').update({ balance: parseFloat(currentWallet.balance) + finalWalletAmount }).eq('id', sourceWalletId);
-
-        if (category === 'Wishlist Savings' && selectedGoal) {
-          const currentGoal = goals.find(g => g.id === parseInt(selectedGoal));
-          await supabase.from('savings_goals').update({ current_saved: parseFloat(currentGoal.current_saved) + (type === 'expense' ? numericAmount : -numericAmount) }).eq('id', parseInt(selectedGoal));
-        }
+      if (type === TRANSACTION_TYPES.TRANSFER && sourceWalletId === targetWalletId) {
+        setToast('Rekening asal dan tujuan tidak boleh sama.');
+        return;
       }
+      const isSavingsGoalDeposit = type === TRANSACTION_TYPES.EXPENSE && ['Wishlist Savings', 'Emergency Savings'].includes(category);
+      const savingsTargetId = Number(savingsWalletId);
+      if (isSavingsGoalDeposit && (!selectedGoal || !savingsWalletId)) {
+        setToast('Pilih target tabungan dan rekening tabungan terlebih dahulu.');
+        return;
+      }
+      if (isSavingsGoalDeposit && sourceWalletId === savingsTargetId) {
+        setToast('Rekening sumber dan rekening tabungan harus berbeda.');
+        return;
+      }
+      const destinationWallet = wallets.find((wallet) => wallet.id === targetWalletId);
+      const transactionDescription = description;
+      const { error } = await supabase.rpc('record_financial_transaction', {
+        p_wallet_id: sourceWalletId,
+        p_amount: numericAmount,
+        p_transaction_type: type,
+        p_category: type === TRANSACTION_TYPES.TRANSFER ? 'Transfer' : category,
+        p_created_at: transactionDate,
+        p_description: type === TRANSACTION_TYPES.TRANSFER && !description
+          ? `Ke ${destinationWallet?.display_name || destinationWallet?.name || 'rekening tujuan'}`
+          : transactionDescription,
+        p_target_wallet_id: type === TRANSACTION_TYPES.TRANSFER
+          ? targetWalletId
+          : isSavingsGoalDeposit ? savingsTargetId : null,
+        p_goal_id: isSavingsGoalDeposit && selectedGoal
+          ? Number(selectedGoal)
+          : null
+      });
+      if (error) throw error;
 
       setAmount(''); setDescription(''); setShowTransactionModal(false); 
       await fetchData(); 
-      alert('Catatan berhasil ditambahkan! ✨');
-    } catch (error) { alert('Gagal menyimpan: ' + error.message); } finally { setSubmitting(false); }
+      setToast('Catatan berhasil ditambahkan.');
+    } catch (error) { setToast('Gagal menyimpan: ' + error.message); } finally { setSubmitting(false); }
   };
 
   // --- DELETE TRANSACTION ---
   const handleDeleteTransaction = async (tx) => {
-    if (!window.confirm('Yakin ingin menghapus transaksi ini? Saldo dompet akan disesuaikan kembali secara otomatis.')) return;
-
     try {
-      const wallet = wallets.find(w => w.id === tx.wallet_id);
-      if (wallet) {
-        const revertedBalance = parseFloat(wallet.balance) - parseFloat(tx.amount);
-        const { error: walletError } = await supabase.from('wallets').update({ balance: revertedBalance }).eq('id', tx.wallet_id);
-        if (walletError) throw walletError; 
-      }
-      const { error: txError } = await supabase.from('transactions').delete().eq('id', tx.id);
-      if (txError) throw txError; 
+      const { error } = await supabase.rpc('delete_financial_transaction', { p_transaction_id: tx.id });
+      if (error) throw error;
 
       await fetchData();
-      alert('Yeay, transaksi berhasil dihapus! 🗑️✨');
+      setToast('Transaksi berhasil dihapus.');
     } catch (error) {
-      alert('Gagal menghapus: ' + (error.message || JSON.stringify(error)));
+      setToast('Gagal menghapus: ' + (error.message || JSON.stringify(error)));
     }
   };
 
@@ -221,34 +260,20 @@ function App() {
 
     setSubmitting(true);
     try {
-      // 1. Update the wallet balance
-      const { error: walletError } = await supabase
-        .from('wallets')
-        .update({ balance: numericNewBalance })
-        .eq('id', editingWallet.id);
-      
-      if (walletError) throw walletError;
-
-      // 2. Insert the auto-adjustment transaction
-      const { error: txError } = await supabase
-        .from('transactions')
-        .insert([{
-          wallet_id: editingWallet.id,
-          amount: difference,
-          category: 'Adjustment',
-          created_at: new Date().toISOString().split('T')[0], // Today's date
-          description: 'Penyesuaian Manual via Aplikasi'
-        }]);
-
-      if (txError) throw txError;
+      const { error } = await supabase.rpc('set_wallet_balance', {
+        p_wallet_id: editingWallet.id,
+        p_target_balance: numericNewBalance,
+        p_created_at: localDateKey(new Date())
+      });
+      if (error) throw error;
 
       setShowBalanceModal(false);
       setEditingWallet(null);
       setNewBalanceInput('');
       await fetchData();
-      alert('Saldo berhasil disesuaikan! ⚖️✨');
+      setToast('Saldo berhasil disesuaikan.');
     } catch (error) {
-      alert('Gagal menyesuaikan saldo: ' + error.message);
+      setToast('Gagal menyesuaikan saldo: ' + error.message);
     } finally {
       setSubmitting(false);
     }
@@ -263,7 +288,7 @@ function App() {
       if (goalIdToEdit) await supabase.from('savings_goals').update(payload).eq('id', goalIdToEdit);
       else await supabase.from('savings_goals').insert([payload]);
       resetCrudForm(); await fetchData();
-    } catch (error) { alert('Gagal: ' + error.message); } finally { setCrudSubmitting(false); }
+    } catch (error) { setToast('Gagal: ' + error.message); } finally { setCrudSubmitting(false); }
   };
 
   const resetCrudForm = () => { setGoalIdToEdit(null); setWishlistItemName(''); setWishlistTargetAmount(''); setWishlistCurrentSaved(''); };
@@ -271,46 +296,101 @@ function App() {
     setGoalIdToEdit(goal.id); setWishlistItemName(goal.item_name); setWishlistTargetAmount(goal.target_amount.toString()); setWishlistCurrentSaved(goal.current_saved.toString()); setShowWishlistCrud(true);
   };
   const handleDeleteWishlist = async (id) => {
-    if (!window.confirm('Yakin ingin menghapus target ini?')) return;
-    try { await supabase.from('savings_goals').delete().eq('id', id); await fetchData(); } catch (error) { alert('Gagal menghapus: ' + error.message); }
+    try {
+      const { error } = await supabase.from('savings_goals').delete().eq('id', id);
+      if (error) throw error;
+      await fetchData();
+      setToast('Target berhasil dihapus.');
+    } catch (error) { setToast('Gagal menghapus: ' + error.message); }
+  };
+
+  const confirmDelete = async () => {
+    const deletion = pendingDelete;
+    setPendingDelete(null);
+    if (deletion?.kind === 'transaction') await handleDeleteTransaction(deletion.payload);
+    if (deletion?.kind === 'wishlist') await handleDeleteWishlist(deletion.payload);
   };
 
   // --- DATA CALCULATIONS ---
-  const currentYear = new Date().getFullYear();
+  const dashboardTransactions = useMemo(() => {
+    const today = new Date();
+    const todayKey = localDateKey(today);
+    const start = new Date(today);
+    if (periodFilter === '7days') start.setDate(start.getDate() - 6);
+    if (periodFilter === '30days') start.setDate(start.getDate() - 29);
+    const startKey = localDateKey(start);
+    const currentMonth = monthKey(today);
+    const currentYear = String(today.getFullYear());
 
-  const dashboardTransactions = transactions.filter(tx => {
-    const txDate = new Date(tx.created_at);
-    const matchesMonth = (txDate.getMonth() + 1) === parseInt(selectedMonth) && txDate.getFullYear() === currentYear;
-    const matchesWallet = dashboardWalletId === 'All' || tx.wallet_id === parseInt(dashboardWalletId);
-    return matchesMonth && matchesWallet;
-  });
+    return transactions.filter((tx) => {
+      const txDate = dateKey(tx.created_at);
+      const matchesWallet = dashboardWalletId === 'All' || tx.wallet_id === Number(dashboardWalletId);
+      let matchesPeriod = true;
+      if (periodFilter === '7days' || periodFilter === '30days') matchesPeriod = txDate >= startKey && txDate <= todayKey;
+      if (periodFilter === 'month') matchesPeriod = txDate.startsWith(currentMonth);
+      if (periodFilter === 'year') matchesPeriod = txDate.startsWith(currentYear);
+      if (periodFilter === 'custom') {
+        matchesPeriod = (!customStartDate || txDate >= customStartDate) && (!customEndDate || txDate <= customEndDate);
+      }
+      return matchesWallet && matchesPeriod;
+    });
+  }, [transactions, dashboardWalletId, periodFilter, customStartDate, customEndDate]);
 
-  const getChartData = () => {
-    // NEW: Exclude 'Adjustment' from the pie chart so it doesn't mess up spending analysis
-    const filtered = dashboardTransactions.filter(tx => tx.amount < 0 && tx.category !== 'Transfer' && tx.category !== 'Adjustment');
-    const totals = filtered.reduce((acc, curr) => {
-      acc[curr.category] = (acc[curr.category] || 0) + Math.abs(curr.amount);
+  const chartData = useMemo(() => {
+    const totals = dashboardTransactions.reduce((acc, tx) => {
+      if (tx.amount < 0 && !['Transfer', 'Adjustment', 'Wishlist Savings', 'Emergency Savings'].includes(tx.category)) {
+        acc[tx.category] = (acc[tx.category] || 0) + Math.abs(Number(tx.amount));
+      }
       return acc;
     }, {});
-    return Object.keys(totals).map(key => ({ name: t.cats[key] || key, value: totals[key] }));
-  };
+    return Object.entries(totals)
+      .map(([categoryKey, value]) => ({ category: categoryKey, name: t.cats[categoryKey] || categoryKey, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [dashboardTransactions, t.cats]);
 
-  const calculateMonthlySummary = () => {
-    let totalIncome = 0;
-    let totalExpense = 0;
-    dashboardTransactions.forEach(tx => {
-      // NEW: Exclude 'Adjustment' from dashboard summaries
-      if (tx.category === 'Transfer' || tx.category === 'Adjustment') return;
-      if (tx.amount > 0) totalIncome += tx.amount;
-      if (tx.amount < 0) totalExpense += Math.abs(tx.amount);
-    });
-    return { totalIncome, totalExpense, net: totalIncome - totalExpense };
-  };
+  const monthlySummary = useMemo(() => {
+    const summary = dashboardTransactions.reduce((result, tx) => {
+      if (!['Transfer', 'Adjustment', 'Wishlist Savings', 'Emergency Savings'].includes(tx.category)) {
+        if (tx.amount > 0) result.totalIncome += Number(tx.amount);
+        if (tx.amount < 0) result.totalExpense += Math.abs(Number(tx.amount));
+      }
+      return result;
+    }, { totalIncome: 0, totalExpense: 0 });
+    return { ...summary, net: summary.totalIncome - summary.totalExpense };
+  }, [dashboardTransactions]);
 
-  const chartData = getChartData();
-  const monthlySummary = calculateMonthlySummary();
+  const currentMonthTransactions = useMemo(() => transactions.filter((tx) =>
+    dateKey(tx.created_at).startsWith(monthKey()) && tx.amount < 0 && !['Transfer', 'Adjustment', 'Wishlist Savings', 'Emergency Savings'].includes(tx.category)
+  ), [transactions]);
+  const budgetRows = Object.entries(budgetLimits[monthKey()] || {}).map(([categoryKey, limit]) => {
+    const spent = currentMonthTransactions
+      .filter((tx) => tx.category === categoryKey)
+      .reduce((total, tx) => total + Math.abs(Number(tx.amount)), 0);
+    return { category: categoryKey, limit: Number(limit), spent, percent: Math.min(Math.round((spent / Number(limit)) * 100), 100) };
+  }).filter((row) => row.limit > 0);
+
+  const saveBudget = (event) => {
+    event.preventDefault();
+    const limit = parseRawNumber(budgetInput);
+    if (limit <= 0) return;
+    setBudgetLimits((current) => ({
+      ...current,
+      [monthKey()]: { ...current[monthKey()], [budgetCategory]: limit }
+    }));
+    setBudgetInput('');
+  };
   const COLORS = ['#eab308', '#e11d48', '#16a34a', '#3b82f6', '#a855f7', '#fb923c', '#2dd4bf'];
   const theme = isDarkMode ? darkYellowTheme : lightYellowTheme;
+
+  const filteredTransactions = useMemo(() => {
+    const historySource = syncHistoryWithDashboard ? dashboardTransactions : transactions;
+    return historySource.filter(tx => {
+    const matchesSearch = tx.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          (t.cats[tx.category] || tx.category).toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = filterCategory === 'All' || tx.category === filterCategory;
+    return matchesSearch && matchesCategory;
+    });
+  }, [transactions, dashboardTransactions, syncHistoryWithDashboard, searchTerm, filterCategory, t.cats]);
 
   if (loading) {
     return (
@@ -321,50 +401,18 @@ function App() {
     );
   }
 
-  const filteredTransactions = transactions.filter(tx => {
-    const matchesSearch = tx.description?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          (t.cats[tx.category] || tx.category).toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = filterCategory === 'All' || tx.category === filterCategory;
-    return matchesSearch && matchesCategory;
-  });
-
   return (
     <div style={{ ...styles.appContainer, backgroundColor: theme.bg }}>
-      <div style={styles.utilityBar}>
-        <button onClick={() => setIsDarkMode(!isDarkMode)} style={{ ...styles.utilBtn, backgroundColor: theme.cardBg, color: theme.textSecondary }}>
-          {isDarkMode ? '☀️ Terang' : '🌙 Gelap'}
-        </button>
-      </div>
-
-      <header style={styles.header}>
-        {showGreeting && <div style={{ color: theme.accent, fontWeight: '600', marginBottom: '10px' }}>I love you, Bobooo! 💖</div>}
-        <h1 style={{ ...styles.title, color: theme.textMain }}>BooCash</h1>
-        <p style={{ ...styles.subtitle, color: theme.textSecondary }}>Mencatat masa depan kita bersama</p>
-      </header>
+      {toast && <div role="status" style={{ position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', zIndex: 1200, width: 'max-content', maxWidth: 'calc(100vw - 32px)', padding: '12px 16px', borderRadius: '12px', backgroundColor: theme.textMain, color: theme.bg, boxShadow: '0 8px 24px rgba(0,0,0,0.2)', fontSize: '0.85rem' }}>{toast}</div>}
+      <Header showGreeting={showGreeting} isDarkMode={isDarkMode} onToggleTheme={() => setIsDarkMode(!isDarkMode)} theme={theme} />
 
       {/* BALANCE SECTION */}
-      <section style={styles.balanceSection}>
-        {wallets.map((wallet) => (
-          <div key={wallet.id} style={{ ...styles.balanceCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-              <span style={{ ...styles.cardLabel, color: theme.textSecondary, marginBottom: 0 }}>
-                {wallet.name.includes('Boo') ? '🏦 Rekening Boo' : wallet.name.includes('Bee') ? '🏦 Rekening Bee' : wallet.name}
-              </span>
-              {/* NEW: Edit Balance Button */}
-              <button 
-                onClick={() => { setEditingWallet(wallet); setNewBalanceInput(formatThousand(wallet.balance)); setShowBalanceModal(true); }}
-                style={{ background: 'none', border: 'none', padding: '2px', cursor: 'pointer', fontSize: '0.85rem' }}
-                title="Edit Saldo Manual"
-              >
-                ✏️
-              </button>
-            </div>
-            <span style={{ ...styles.cardAmount, color: theme.textMain }}>
-              Rp {Number(wallet.balance).toLocaleString('id-ID')}
-            </span>
-          </div>
-        ))}
-      </section>
+      <WalletList
+        wallets={wallets}
+        theme={theme}
+        formatAmount={formatThousand}
+        onEdit={(wallet) => { setEditingWallet(wallet); setNewBalanceInput(formatThousand(wallet.balance)); setShowBalanceModal(true); }}
+      />
 
       {/* MODAL EDIT SALDO (NEW) */}
       {showBalanceModal && (
@@ -380,7 +428,7 @@ function App() {
             <form onSubmit={handleEditBalanceSubmit} style={styles.flexForm}>
               <div style={styles.inputGroup}>
                 <label style={{ ...styles.label, color: theme.textSecondary }}>
-                  Saldo Baru untuk {editingWallet?.name.includes('Boo') ? 'Rekening Boo' : 'Rekening Bee'}
+                  Saldo Baru untuk {editingWallet?.display_name || editingWallet?.name}
                 </label>
                 <div style={styles.amountInputWrapper}>
                   <span style={{ ...styles.currencyPrefix, color: theme.textMain }}>Rp</span>
@@ -404,7 +452,7 @@ function App() {
       {/* DASHBOARD: SUMMARY & CHART */}
       <section style={{ ...styles.card, backgroundColor: theme.cardBg, border: theme.border }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
-          <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Dashboard Bulanan</h3>
+          <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Ringkasan Keuangan</h3>
           <div style={{ display: 'flex', gap: '8px' }}>
             <select 
               value={dashboardWalletId} 
@@ -414,22 +462,24 @@ function App() {
               <option value="All">Semua Rekening</option>
               {wallets.map(w => (
                 <option key={w.id} value={w.id}>
-                  {w.name.includes('Boo') ? 'Rekening Boo' : w.name.includes('Bee') ? 'Rekening Bee' : w.name}
+                  {w.display_name || w.name}
                 </option>
               ))}
             </select>
-            <select 
-              value={selectedMonth} 
-              onChange={(e) => setSelectedMonth(e.target.value)}
+            <select
+              value={periodFilter}
+              onChange={(e) => setPeriodFilter(e.target.value)}
               style={{ ...styles.minimalInput, width: 'auto', padding: '6px 10px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
             >
-              {[...Array(12)].map((_, i) => (
-                <option key={i + 1} value={i + 1}>
-                  {new Date(0, i).toLocaleString('id-ID', { month: 'long' })}
-                </option>
-              ))}
+              {PERIOD_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </div>
+          {periodFilter === 'custom' && (
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input aria-label="Tanggal mulai" type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} style={{ ...styles.minimalInput, flex: 1, padding: '8px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }} />
+              <input aria-label="Tanggal akhir" type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} style={{ ...styles.minimalInput, flex: 1, padding: '8px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }} />
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
@@ -443,22 +493,40 @@ function App() {
           </div>
         </div>
         <div style={{ padding: '10px', borderRadius: '12px', backgroundColor: theme.inputBg, textAlign: 'center', marginBottom: '20px' }}>
-            <div style={{ fontSize: '0.75rem', color: theme.textSecondary, fontWeight: '700' }}>SISA DANA BULAN INI</div>
+            <div style={{ fontSize: '0.75rem', color: theme.textSecondary, fontWeight: '700' }}>SELISIH PERIODE</div>
             <div style={{ color: theme.textMain, fontWeight: '700', fontSize: '1.2rem' }}>Rp {formatThousand(monthlySummary.net)}</div>
         </div>
 
-        {chartData.length > 0 ? (
-          <div style={{ height: '200px' }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={chartData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                  {chartData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                </Pie>
-                <Tooltip formatter={(value) => `Rp ${formatThousand(value)}`} />
-              </PieChart>
-            </ResponsiveContainer>
+        <DashboardChart data={chartData} colors={COLORS} theme={theme} formatAmount={formatThousand} />
+      </section>
+
+      <section style={{ ...styles.card, backgroundColor: theme.cardBg, border: theme.border }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px', marginBottom: '12px' }}>
+          <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Anggaran Bulan Ini</h3>
+          <span style={{ color: theme.textSecondary, fontSize: '0.7rem' }}>{new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' })}</span>
+        </div>
+        <form onSubmit={saveBudget} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '8px', marginBottom: '14px' }}>
+          <select aria-label="Kategori anggaran" value={budgetCategory} onChange={(e) => setBudgetCategory(e.target.value)} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.75rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}>
+            {EXPENSE_CATEGORIES.filter(([key]) => !['Wishlist Savings', 'Emergency Savings'].includes(key)).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+          <input aria-label="Batas anggaran rupiah" inputMode="numeric" placeholder="Batas Rp" value={budgetInput} onChange={(e) => setBudgetInput(formatThousand(e.target.value))} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.75rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }} />
+          <button type="submit" style={{ ...styles.manageBtn, backgroundColor: theme.accent, color: theme.buttonText, padding: '8px 11px' }}>Simpan</button>
+        </form>
+        {budgetRows.length > 0 ? (
+          <div style={{ display: 'grid', gap: '12px' }}>
+            {budgetRows.map((row) => (
+              <div key={row.category}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '0.73rem', marginBottom: '5px' }}>
+                  <span style={{ color: theme.textMain }}>{t.cats[row.category] || row.category}</span>
+                  <span style={{ color: row.spent > row.limit ? theme.expenseColor : theme.textSecondary, whiteSpace: 'nowrap' }}>Rp {formatThousand(row.spent)} / {formatThousand(row.limit)}</span>
+                </div>
+                <div style={{ height: '7px', borderRadius: '8px', overflow: 'hidden', backgroundColor: theme.inputBg }}>
+                  <div style={{ height: '100%', width: `${row.percent}%`, backgroundColor: row.spent > row.limit ? theme.expenseColor : theme.incomeColor, borderRadius: '8px' }} />
+                </div>
+              </div>
+            ))}
           </div>
-        ) : <p style={{ textAlign: 'center', color: theme.textSecondary, fontSize: '0.9rem' }}>Belum ada pengeluaran di filter ini ✨</p>}
+        ) : <p style={{ color: theme.textSecondary, fontSize: '0.8rem' }}>Belum ada batas anggaran. Pilih kategori dan tentukan batas bulan ini.</p>}
       </section>
 
       <button 
@@ -547,23 +615,23 @@ function App() {
 
             <form onSubmit={handleSubmit} style={styles.flexForm}>
               <div style={{ ...styles.segmentedControl, backgroundColor: theme.inputBg, gridTemplateColumns: '1fr 1fr 1fr' }}>
-                <button type="button" onClick={() => setType('expense')} style={{ ...styles.segmentBtn, color: type === 'expense' ? theme.expenseColor : theme.textSecondary, ...(type === 'expense' ? { backgroundColor: theme.activeSegmentBg, fontWeight: '600' } : {}) }}>Pengeluaran</button>
-                <button type="button" onClick={() => setType('income')} style={{ ...styles.segmentBtn, color: type === 'income' ? theme.incomeColor : theme.textSecondary, ...(type === 'income' ? { backgroundColor: theme.activeSegmentBg, fontWeight: '600' } : {}) }}>Pemasukan</button>
-                <button type="button" onClick={() => setType('transfer')} style={{ ...styles.segmentBtn, color: type === 'transfer' ? theme.accent : theme.textSecondary, ...(type === 'transfer' ? { backgroundColor: theme.activeSegmentBg, fontWeight: '600' } : {}) }}>🔄 Transfer</button>
+                <button type="button" onClick={() => { setType(TRANSACTION_TYPES.EXPENSE); setCategory('Food'); }} style={{ ...styles.segmentBtn, color: type === TRANSACTION_TYPES.EXPENSE ? theme.expenseColor : theme.textSecondary, ...(type === TRANSACTION_TYPES.EXPENSE ? { backgroundColor: theme.activeSegmentBg, fontWeight: '600' } : {}) }}>Pengeluaran</button>
+                <button type="button" onClick={() => { setType(TRANSACTION_TYPES.INCOME); setCategory('Salary'); }} style={{ ...styles.segmentBtn, color: type === TRANSACTION_TYPES.INCOME ? theme.incomeColor : theme.textSecondary, ...(type === TRANSACTION_TYPES.INCOME ? { backgroundColor: theme.activeSegmentBg, fontWeight: '600' } : {}) }}>Pemasukan</button>
+                <button type="button" onClick={() => { setType(TRANSACTION_TYPES.TRANSFER); setCategory('Transfer'); }} style={{ ...styles.segmentBtn, color: type === TRANSACTION_TYPES.TRANSFER ? theme.accent : theme.textSecondary, ...(type === TRANSACTION_TYPES.TRANSFER ? { backgroundColor: theme.activeSegmentBg, fontWeight: '600' } : {}) }}>🔄 Transfer</button>
               </div>
 
-              {type === 'transfer' ? (
+              {type === TRANSACTION_TYPES.TRANSFER ? (
                 <>
                   <div style={styles.inputGroup}>
                     <label style={{ ...styles.label, color: theme.textSecondary }}>Dari Rekening</label>
                     <select value={selectedWallet} onChange={(e) => setSelectedWallet(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}>
-                      {wallets.map(w => <option key={w.id} value={w.id}>{w.name.includes('Boo') ? 'Rekening Boo' : w.name.includes('Bee') ? 'Rekening Bee' : w.name}</option>)}
+                      {wallets.map(w => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
                     </select>
                   </div>
                   <div style={styles.inputGroup}>
                     <label style={{ ...styles.label, color: theme.accent }}>Ke Rekening</label>
                     <select value={targetWallet} onChange={(e) => setTargetWallet(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.accent, color: theme.textMain }}>
-                      {wallets.map(w => <option key={w.id} value={w.id}>{w.name.includes('Boo') ? 'Rekening Boo' : w.name.includes('Bee') ? 'Rekening Bee' : w.name}</option>)}
+                      {wallets.map(w => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
                     </select>
                   </div>
                 </>
@@ -571,37 +639,62 @@ function App() {
                 <>
                   <div style={styles.inputGroup}>
                     <label style={{ ...styles.label, color: theme.textSecondary }}>Akun / Dompet</label>
-                    <select value={selectedWallet} onChange={(e) => setSelectedWallet(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}>
-                      {wallets.map(w => <option key={w.id} value={w.id}>{w.name.includes('Boo') ? 'Rekening Boo' : w.name.includes('Bee') ? 'Rekening Bee' : w.name}</option>)}
+                    <select value={selectedWallet} onChange={(e) => {
+                      const nextWalletId = e.target.value;
+                      setSelectedWallet(nextWalletId);
+                      if (Number(savingsWalletId) === Number(nextWalletId)) {
+                        setSavingsWalletId(wallets.find((wallet) => wallet.id !== Number(nextWalletId))?.id.toString() || '');
+                      }
+                    }} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}>
+                      {wallets.map(w => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
                     </select>
                   </div>
                   <div style={styles.inputGroup}>
                     <label style={{ ...styles.label, color: theme.textSecondary }}>Kategori</label>
-                    <select value={category} onChange={(e) => setCategory(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}>
-                      {type === 'income' ? <option value="Salary">{t.cats.Salary}</option> : (
-                        <>
-                          <option value="Food">{t.cats.Food}</option>
-                          <option value="Groceries">{t.cats.Groceries}</option>
-                          <option value="Shopping">{t.cats.Shopping}</option>
-                          <option value="Transport">{t.cats.Transport}</option>
-                          <option value="Bills">{t.cats.Bills}</option>
-                          <option value="Entertainment">{t.cats.Entertainment}</option>
-                          <option value="Health">{t.cats.Health}</option>
-                          <option value="Wishlist Savings">{t.cats['Wishlist Savings']}</option>
-                        </>
-                      )}
+                    <select value={category} onChange={(e) => {
+                      const nextCategory = e.target.value;
+                      setCategory(nextCategory);
+                      if (nextCategory === 'Emergency Savings') {
+                        const emergencyGoal = goals.find((goal) => /darurat|emergency/i.test(goal.item_name));
+                        setSelectedGoal(emergencyGoal ? emergencyGoal.id.toString() : '');
+                      }
+                    }} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}>
+                      {type === TRANSACTION_TYPES.INCOME
+                        ? INCOME_CATEGORIES.map(([key, label]) => <option key={key} value={key}>{label}</option>)
+                        : EXPENSE_CATEGORIES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                     </select>
                   </div>
                 </>
               )}
 
-              {category === 'Wishlist Savings' && type === 'expense' && (
-                <div style={styles.inputGroup}>
-                  <label style={{ ...styles.label, color: theme.accent }}>Pilih Target Wishlist</label>
-                  <select value={selectedGoal} onChange={(e) => setSelectedGoal(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.accent, color: theme.textMain }}>
-                    {goals.map(g => <option key={g.id} value={g.id}>🎯 {g.item_name}</option>)}
-                  </select>
-                </div>
+              {['Wishlist Savings', 'Emergency Savings'].includes(category) && type === TRANSACTION_TYPES.EXPENSE && (
+                <>
+                  <div style={styles.inputGroup}>
+                    <label style={{ ...styles.label, color: theme.accent }}>Pilih Target Tabungan</label>
+                    <select value={selectedGoal} onChange={(e) => setSelectedGoal(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.accent, color: theme.textMain }} required>
+                      <option value="" disabled>
+                        {category === 'Emergency Savings' ? 'Buat target Dana Darurat dulu' : 'Pilih target'}
+                      </option>
+                      {goals
+                        .filter((goal) => category !== 'Emergency Savings' || /darurat|emergency/i.test(goal.item_name))
+                        .map((goal) => <option key={goal.id} value={goal.id}>🎯 {goal.item_name}</option>)}
+                    </select>
+                  </div>
+                  {category === 'Emergency Savings' && !goals.some((goal) => /darurat|emergency/i.test(goal.item_name)) && (
+                    <p style={{ color: theme.textSecondary, fontSize: '0.78rem', marginTop: '-8px' }}>
+                      Tutup form, lalu buat target bernama “Dana Darurat” dari tombol Kelola Wishlist.
+                    </p>
+                  )}
+                  <div style={styles.inputGroup}>
+                    <label style={{ ...styles.label, color: theme.accent }}>Pindahkan ke rekening tabungan</label>
+                    <select value={savingsWalletId} onChange={(e) => setSavingsWalletId(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.accent, color: theme.textMain }} required>
+                      <option value="" disabled>Pilih rekening tujuan</option>
+                      {wallets.filter((wallet) => wallet.id !== Number(selectedWallet)).map((wallet) => (
+                        <option key={wallet.id} value={wallet.id}>{wallet.display_name || wallet.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
               )}
 
               <div style={styles.inputGroup}>
@@ -650,6 +743,16 @@ function App() {
               </select>
             </div>
 
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '9px', marginBottom: '14px', color: theme.textSecondary, fontSize: '0.8rem', lineHeight: 1.4, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={syncHistoryWithDashboard}
+                onChange={(event) => setSyncHistoryWithDashboard(event.target.checked)}
+                style={{ marginTop: '2px', accentColor: theme.accent }}
+              />
+              <span>Ikuti filter dashboard (dompet dan periode)</span>
+            </label>
+
             <div style={{ ...styles.historyList, maxHeight: '60vh', overflowY: 'auto', gap: '10px' }}>
               {filteredTransactions.map((tx) => {
                 const isExpense = tx.amount < 0;
@@ -669,7 +772,7 @@ function App() {
                       <span style={{ ...styles.txAmount, color: isExpense ? theme.expenseColor : theme.incomeColor }}>
                         {isExpense ? '- ' : '+ '}Rp {Number(Math.abs(tx.amount)).toLocaleString('id-ID')}
                       </span>
-                      <button onClick={() => handleDeleteTransaction(tx)} style={{ background: 'none', border: 'none', color: theme.expenseColor, fontSize: '0.75rem', cursor: 'pointer', padding: 0 }}>
+                      <button onClick={() => setPendingDelete({ kind: 'transaction', payload: tx })} style={{ background: 'none', border: 'none', color: theme.expenseColor, fontSize: '0.75rem', cursor: 'pointer', padding: 0 }}>
                         🗑️ Hapus
                       </button>
                     </div>
@@ -719,10 +822,24 @@ function App() {
                   </div>
                   <div style={styles.crudButtons}>
                     <button onClick={() => handleEditClick(g)} style={{ ...styles.iconBtn, color: '#eab308' }}>✏️</button>
-                    <button onClick={() => handleDeleteWishlist(g.id)} style={{ ...styles.iconBtn, color: '#e11d48' }}>🗑️</button>
+                    <button onClick={() => setPendingDelete({ kind: 'wishlist', payload: g.id })} style={{ ...styles.iconBtn, color: '#e11d48' }}>🗑️</button>
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {pendingDelete && (
+        <div style={{ ...styles.modalOverlay, zIndex: 1100 }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title" style={{ ...styles.modalContent, maxWidth: '360px', borderRadius: '20px', padding: '22px', backgroundColor: theme.bg, border: theme.border }}>
+            <h2 id="delete-dialog-title" style={{ ...styles.modalTitle, color: theme.textMain, marginBottom: '10px' }}>Konfirmasi hapus</h2>
+            <p style={{ color: theme.textSecondary, fontSize: '0.85rem', marginBottom: '18px' }}>
+              {pendingDelete.kind === 'transaction' ? 'Transaksi akan dihapus dan saldo dompet disesuaikan.' : 'Target wishlist ini akan dihapus.'}
+            </p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={() => setPendingDelete(null)} style={{ ...styles.cancelBtn, color: theme.textMain, backgroundColor: theme.inputBg }}>Batal</button>
+              <button onClick={confirmDelete} style={{ ...styles.cancelBtn, color: '#fff', backgroundColor: theme.expenseColor }}>Hapus</button>
             </div>
           </div>
         </div>
@@ -792,7 +909,7 @@ const styles = {
   goalAmountRow: { display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: '500' },
   flexForm: { display: 'flex', flexDirection: 'column', gap: '16px' },
   segmentedControl: { display: 'grid', padding: '4px', borderRadius: '12px' },
-  segmentBtn: { padding: '10px', borderRadius: '10px', border: 'none', background: 'none', fontSize: '0.85rem', cursor: 'pointer' },
+  segmentBtn: { padding: '10px', borderRadius: '10px', border: 'none', backgroundColor: 'transparent', fontSize: '0.85rem', cursor: 'pointer' },
   inputGroup: { display: 'flex', flexDirection: 'column', gap: '6px' },
   label: { fontSize: '0.75rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' },
   amountInputWrapper: { position: 'relative', display: 'flex', alignItems: 'center' },

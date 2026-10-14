@@ -51,19 +51,19 @@ Untuk mulai melacak uang yang sudah lebih dulu dititipkan sebelum BooCash diguna
 
 ### Anggaran bersama dan pribadi
 
-Anggaran bulanan dapat dibuat terpisah untuk **Bersama**, **Saya**, dan **Pasangan**. Pilih scope di bagian Anggaran Bulan Ini, lalu simpan batas per kategori untuk scope tersebut. Batas kategori pada satu scope tidak mengubah batas di scope lainnya.
+Anggaran bulanan dapat dibuat terpisah untuk **Bersama**, **Bee (Saya)**, dan **Boo (Pasangan)**. Pilih scope di bagian Anggaran Bulan Ini, lalu simpan batas per kategori untuk scope tersebut. Batas kategori pada satu scope tidak mengubah batas di scope lainnya.
 
 Setiap anggaran yang sudah dibuat memiliki tombol **Edit** dan **Hapus**. **Edit** memuat kategori serta batas saat ini ke form; ubah nominal lalu tekan **Perbarui**, atau tekan **Batal edit** untuk keluar tanpa mengubah batas. Scope dan kategori dikunci selama mode edit agar anggaran tidak berpindah ke scope/kategori lain. **Hapus** meminta konfirmasi dan menghapus batas kategori hanya dari scope yang sedang dilihat; transaksi keuangan tidak ikut terhapus.
 
 Setiap kali mencatat pengeluaran biasa, pilih **Pengeluaran ini untuk** dengan scope yang sama:
 
 - **Bersama** untuk kebutuhan rumah tangga atau biaya yang memang dibagi.
-- **Saya** untuk pengeluaran pribadi Anda.
-- **Pasangan** untuk pengeluaran pribadi pasangan yang sedang Anda catat.
+- **Bee (Saya)** untuk pengeluaran pribadi Anda.
+- **Boo (Pasangan)** untuk pengeluaran pribadi pasangan yang sedang Anda catat.
 
 Progres anggaran hanya menghitung pengeluaran bulan berjalan dengan scope yang dipilih. Transfer, penyesuaian saldo, setoran wishlist, dan setoran dana darurat tidak dihitung sebagai pengeluaran anggaran. Pemasukan tidak memengaruhi anggaran kategori.
 
-Migration memberi transaksi lama label `Bersama` agar tetap terlihat pada anggaran gabungan. Anggaran lama yang tersimpan di browser juga dipertahankan di scope Bersama. Transaksi lama tidak dapat dibagi otomatis menjadi Saya/Pasangan karena informasi pemiliknya sebelumnya belum dicatat; mulai pilih scope pada transaksi baru. Pengaturan batas anggaran tetap tersimpan lokal per browser.
+Migration memberi transaksi lama label `Bersama` agar tetap terlihat pada anggaran gabungan. Anggaran lama yang tersimpan di browser juga dipertahankan di scope Bersama. Transaksi lama tidak dapat dibagi otomatis menjadi Bee/Boo karena informasi pemiliknya sebelumnya belum dicatat; mulai pilih scope pada transaksi baru. Pengaturan batas anggaran tetap tersimpan lokal per browser.
 
 ## 2. Aturan dasar pencatatan
 

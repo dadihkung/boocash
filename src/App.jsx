@@ -26,7 +26,7 @@ const PERIOD_OPTIONS = [
   ['year', 'Tahun ini'], ['all', 'Semua waktu'], ['custom', 'Pilih tanggal']
 ];
 const BUDGET_SCOPES = [
-  ['shared', 'Bersama'], ['me', 'Bee (Saya)'], ['partner', 'Boo (Pasangan)']
+  ['shared', 'Bersama'], ['me', 'Bee'], ['partner', 'Boo']
 ];
 const dateKey = (value) => String(value || '').slice(0, 10);
 const localDateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;

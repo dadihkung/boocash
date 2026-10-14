@@ -52,6 +52,8 @@ Untuk mulai melacak uang yang sudah lebih dulu dititipkan sebelum BooCash diguna
 
 Anggaran bulanan dapat dibuat terpisah untuk **Bersama**, **Saya**, dan **Pasangan**. Pilih scope di bagian Anggaran Bulan Ini, lalu simpan batas per kategori untuk scope tersebut. Batas kategori pada satu scope tidak mengubah batas di scope lainnya.
 
+Setiap anggaran yang sudah dibuat memiliki tombol **Edit** dan **Hapus**. **Edit** memuat kategori serta batas saat ini ke form; ubah nominal lalu tekan **Perbarui**, atau tekan **Batal edit** untuk keluar tanpa mengubah batas. Scope dan kategori dikunci selama mode edit agar anggaran tidak berpindah ke scope/kategori lain. **Hapus** meminta konfirmasi dan menghapus batas kategori hanya dari scope yang sedang dilihat; transaksi keuangan tidak ikut terhapus.
+
 Setiap kali mencatat pengeluaran biasa, pilih **Pengeluaran ini untuk** dengan scope yang sama:
 
 - **Bersama** untuk kebutuhan rumah tangga atau biaya yang memang dibagi.

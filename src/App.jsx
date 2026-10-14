@@ -79,6 +79,7 @@ function App() {
   const [budgetCategory, setBudgetCategory] = useState('Food');
   const [budgetInput, setBudgetInput] = useState('');
   const [budgetScope, setBudgetScope] = useState('shared');
+  const [editingBudgetCategory, setEditingBudgetCategory] = useState(null);
   const [budgetLimits, setBudgetLimits] = useState(() => {
     try {
       return normalizeBudgetLimits(JSON.parse(localStorage.getItem('booCashBudgets') || '{}'));
@@ -322,6 +323,25 @@ function App() {
     setPendingDelete(null);
     if (deletion?.kind === 'transaction') await handleDeleteTransaction(deletion.payload);
     if (deletion?.kind === 'wishlist') await handleDeleteWishlist(deletion.payload);
+    if (deletion?.kind === 'budget') {
+      const { month, scope, categoryKey } = deletion.payload;
+      setBudgetLimits((current) => {
+        const nextMonth = { ...current[month] };
+        const nextScope = { ...nextMonth[scope] };
+        delete nextScope[categoryKey];
+        if (Object.keys(nextScope).length > 0) nextMonth[scope] = nextScope;
+        else delete nextMonth[scope];
+        if (Object.keys(nextMonth).length > 0) return { ...current, [month]: nextMonth };
+        const next = { ...current };
+        delete next[month];
+        return next;
+      });
+      if (editingBudgetCategory === categoryKey) {
+        setEditingBudgetCategory(null);
+        setBudgetInput('');
+      }
+      setToast('Anggaran berhasil dihapus.');
+    }
   };
 
   // --- DATA CALCULATIONS ---
@@ -386,13 +406,27 @@ function App() {
     event.preventDefault();
     const limit = parseRawNumber(budgetInput);
     if (limit <= 0) return;
+    const categoryToSave = editingBudgetCategory || budgetCategory;
     setBudgetLimits((current) => ({
       ...current,
       [monthKey()]: {
         ...current[monthKey()],
-        [budgetScope]: { ...current[monthKey()]?.[budgetScope], [budgetCategory]: limit }
+        [budgetScope]: { ...current[monthKey()]?.[budgetScope], [categoryToSave]: limit }
       }
     }));
+    setBudgetInput('');
+    setEditingBudgetCategory(null);
+    setToast(editingBudgetCategory ? 'Anggaran berhasil diperbarui.' : 'Anggaran berhasil disimpan.');
+  };
+
+  const editBudget = (categoryKey, limit) => {
+    setBudgetCategory(categoryKey);
+    setBudgetInput(formatThousand(limit));
+    setEditingBudgetCategory(categoryKey);
+  };
+
+  const cancelBudgetEdit = () => {
+    setEditingBudgetCategory(null);
     setBudgetInput('');
   };
   const COLORS = ['#eab308', '#e11d48', '#16a34a', '#3b82f6', '#a855f7', '#fb923c', '#2dd4bf'];
@@ -523,24 +557,31 @@ function App() {
         </div>
         <div style={{ ...styles.inputGroup, marginBottom: '10px' }}>
           <label style={{ ...styles.label, color: theme.textSecondary }}>Anggaran untuk</label>
-          <select aria-label="Scope anggaran" value={budgetScope} onChange={(e) => setBudgetScope(e.target.value)} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}>
+          <select aria-label="Scope anggaran" value={budgetScope} onChange={(e) => setBudgetScope(e.target.value)} disabled={Boolean(editingBudgetCategory)} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}>
             {BUDGET_SCOPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </div>
         <form onSubmit={saveBudget} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '8px', marginBottom: '14px' }}>
-          <select aria-label="Kategori anggaran" value={budgetCategory} onChange={(e) => setBudgetCategory(e.target.value)} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.75rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}>
+          <select aria-label="Kategori anggaran" value={budgetCategory} onChange={(e) => setBudgetCategory(e.target.value)} disabled={Boolean(editingBudgetCategory)} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.75rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}>
             {EXPENSE_CATEGORIES.filter(([key]) => !['Wishlist Savings', 'Emergency Savings'].includes(key)).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </select>
           <input aria-label="Batas anggaran rupiah" inputMode="numeric" placeholder="Batas Rp" value={budgetInput} onChange={(e) => setBudgetInput(formatThousand(e.target.value))} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.75rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }} />
-          <button type="submit" style={{ ...styles.manageBtn, backgroundColor: theme.accent, color: theme.buttonText, padding: '8px 11px' }}>Simpan</button>
+          <button type="submit" style={{ ...styles.manageBtn, backgroundColor: theme.accent, color: theme.buttonText, padding: '8px 11px' }}>{editingBudgetCategory ? 'Perbarui' : 'Simpan'}</button>
         </form>
+        {editingBudgetCategory && (
+          <button type="button" onClick={cancelBudgetEdit} style={{ ...styles.manageBtn, marginBottom: '14px', color: theme.textSecondary, backgroundColor: theme.inputBg }}>Batal edit</button>
+        )}
         {budgetRows.length > 0 ? (
           <div style={{ display: 'grid', gap: '12px' }}>
             {budgetRows.map((row) => (
               <div key={row.category}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '0.73rem', marginBottom: '5px' }}>
                   <span style={{ color: theme.textMain }}>{t.cats[row.category] || row.category}</span>
-                  <span style={{ color: row.spent > row.limit ? theme.expenseColor : theme.textSecondary, whiteSpace: 'nowrap' }}>Rp {formatThousand(row.spent)} / {formatThousand(row.limit)}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                    <span style={{ color: row.spent > row.limit ? theme.expenseColor : theme.textSecondary, whiteSpace: 'nowrap' }}>Rp {formatThousand(row.spent)} / {formatThousand(row.limit)}</span>
+                    <button type="button" aria-label={`Edit anggaran ${t.cats[row.category] || row.category}`} title="Edit anggaran" onClick={() => editBudget(row.category, row.limit)} style={{ ...styles.iconBtn, padding: '1px 3px', fontSize: '0.85rem', color: theme.accent }}>✏️</button>
+                    <button type="button" aria-label={`Hapus anggaran ${t.cats[row.category] || row.category}`} title="Hapus anggaran" onClick={() => setPendingDelete({ kind: 'budget', payload: { month: monthKey(), scope: budgetScope, categoryKey: row.category } })} style={{ ...styles.iconBtn, padding: '1px 3px', fontSize: '0.85rem', color: theme.expenseColor }}>🗑️</button>
+                  </div>
                 </div>
                 <div style={{ height: '7px', borderRadius: '8px', overflow: 'hidden', backgroundColor: theme.inputBg }}>
                   <div style={{ height: '100%', width: `${row.percent}%`, backgroundColor: row.spent > row.limit ? theme.expenseColor : theme.incomeColor, borderRadius: '8px' }} />
@@ -865,7 +906,11 @@ function App() {
           <div role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title" style={{ ...styles.modalContent, maxWidth: '360px', borderRadius: '20px', padding: '22px', backgroundColor: theme.bg, border: theme.border }}>
             <h2 id="delete-dialog-title" style={{ ...styles.modalTitle, color: theme.textMain, marginBottom: '10px' }}>Konfirmasi hapus</h2>
             <p style={{ color: theme.textSecondary, fontSize: '0.85rem', marginBottom: '18px' }}>
-              {pendingDelete.kind === 'transaction' ? 'Transaksi akan dihapus dan saldo dompet disesuaikan.' : 'Target wishlist ini akan dihapus.'}
+              {pendingDelete.kind === 'transaction'
+                ? 'Transaksi akan dihapus dan saldo dompet disesuaikan.'
+                : pendingDelete.kind === 'budget'
+                  ? 'Batas anggaran untuk kategori dan scope ini akan dihapus. Transaksi tetap aman.'
+                  : 'Target wishlist ini akan dihapus.'}
             </p>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button onClick={() => setPendingDelete(null)} style={{ ...styles.cancelBtn, color: theme.textMain, backgroundColor: theme.inputBg }}>Batal</button>

@@ -25,9 +25,19 @@ const PERIOD_OPTIONS = [
   ['7days', '7 hari terakhir'], ['30days', '30 hari terakhir'], ['month', 'Bulan ini'],
   ['year', 'Tahun ini'], ['all', 'Semua waktu'], ['custom', 'Pilih tanggal']
 ];
+const BUDGET_SCOPES = [
+  ['shared', 'Bersama'], ['me', 'Saya'], ['partner', 'Pasangan']
+];
 const dateKey = (value) => String(value || '').slice(0, 10);
 const localDateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const monthKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+const normalizeBudgetLimits = (storedBudgets) => Object.fromEntries(
+  Object.entries(storedBudgets).map(([month, scopes]) => {
+    const isLegacyBudget = Object.values(scopes || {}).every((value) => typeof value !== 'object' || value === null);
+    return [month, isLegacyBudget ? { shared: scopes } : scopes];
+  })
+);
 
 function App() {
   const [showGreeting, setShowGreeting] = useState(true);
@@ -68,9 +78,10 @@ function App() {
   const [customEndDate, setCustomEndDate] = useState('');
   const [budgetCategory, setBudgetCategory] = useState('Food');
   const [budgetInput, setBudgetInput] = useState('');
+  const [budgetScope, setBudgetScope] = useState('shared');
   const [budgetLimits, setBudgetLimits] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem('booCashBudgets') || '{}');
+      return normalizeBudgetLimits(JSON.parse(localStorage.getItem('booCashBudgets') || '{}'));
     } catch {
       return {};
     }
@@ -83,6 +94,7 @@ function App() {
   const [amount, setAmount] = useState(''); 
   const [type, setType] = useState('expense'); 
   const [category, setCategory] = useState('Food');
+  const [transactionOwnerScope, setTransactionOwnerScope] = useState('shared');
   const [description, setDescription] = useState('');
   const [transactionDate, setTransactionDate] = useState(new Date().toISOString().split('T')[0]); 
   const [submitting, setSubmitting] = useState(false);
@@ -221,7 +233,8 @@ function App() {
           : isSavingsGoalDeposit ? savingsTargetId : null,
         p_goal_id: isSavingsGoalDeposit && selectedGoal
           ? Number(selectedGoal)
-          : null
+          : null,
+        p_owner_scope: transactionOwnerScope
       });
       if (error) throw error;
 
@@ -362,9 +375,9 @@ function App() {
   const currentMonthTransactions = useMemo(() => transactions.filter((tx) =>
     dateKey(tx.created_at).startsWith(monthKey()) && tx.amount < 0 && !['Transfer', 'Adjustment', 'Wishlist Savings', 'Emergency Savings'].includes(tx.category)
   ), [transactions]);
-  const budgetRows = Object.entries(budgetLimits[monthKey()] || {}).map(([categoryKey, limit]) => {
+  const budgetRows = Object.entries(budgetLimits[monthKey()]?.[budgetScope] || {}).map(([categoryKey, limit]) => {
     const spent = currentMonthTransactions
-      .filter((tx) => tx.category === categoryKey)
+      .filter((tx) => tx.category === categoryKey && (tx.owner_scope || 'shared') === budgetScope)
       .reduce((total, tx) => total + Math.abs(Number(tx.amount)), 0);
     return { category: categoryKey, limit: Number(limit), spent, percent: Math.min(Math.round((spent / Number(limit)) * 100), 100) };
   }).filter((row) => row.limit > 0);
@@ -375,7 +388,10 @@ function App() {
     if (limit <= 0) return;
     setBudgetLimits((current) => ({
       ...current,
-      [monthKey()]: { ...current[monthKey()], [budgetCategory]: limit }
+      [monthKey()]: {
+        ...current[monthKey()],
+        [budgetScope]: { ...current[monthKey()]?.[budgetScope], [budgetCategory]: limit }
+      }
     }));
     setBudgetInput('');
   };
@@ -505,6 +521,12 @@ function App() {
           <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Anggaran Bulan Ini</h3>
           <span style={{ color: theme.textSecondary, fontSize: '0.7rem' }}>{new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' })}</span>
         </div>
+        <div style={{ ...styles.inputGroup, marginBottom: '10px' }}>
+          <label style={{ ...styles.label, color: theme.textSecondary }}>Anggaran untuk</label>
+          <select aria-label="Scope anggaran" value={budgetScope} onChange={(e) => setBudgetScope(e.target.value)} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}>
+            {BUDGET_SCOPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </div>
         <form onSubmit={saveBudget} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '8px', marginBottom: '14px' }}>
           <select aria-label="Kategori anggaran" value={budgetCategory} onChange={(e) => setBudgetCategory(e.target.value)} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.75rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}>
             {EXPENSE_CATEGORIES.filter(([key]) => !['Wishlist Savings', 'Emergency Savings'].includes(key)).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
@@ -526,7 +548,7 @@ function App() {
               </div>
             ))}
           </div>
-        ) : <p style={{ color: theme.textSecondary, fontSize: '0.8rem' }}>Belum ada batas anggaran. Pilih kategori dan tentukan batas bulan ini.</p>}
+        ) : <p style={{ color: theme.textSecondary, fontSize: '0.8rem' }}>Belum ada batas anggaran untuk {BUDGET_SCOPES.find(([value]) => value === budgetScope)?.[1].toLowerCase()}. Pilih kategori dan tentukan batas bulan ini.</p>}
       </section>
 
       <button 
@@ -664,6 +686,14 @@ function App() {
                         : EXPENSE_CATEGORIES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                     </select>
                   </div>
+                  {type === TRANSACTION_TYPES.EXPENSE && !['Wishlist Savings', 'Emergency Savings'].includes(category) && (
+                    <div style={styles.inputGroup}>
+                      <label style={{ ...styles.label, color: theme.textSecondary }}>Pengeluaran ini untuk</label>
+                      <select value={transactionOwnerScope} onChange={(e) => setTransactionOwnerScope(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}>
+                        {BUDGET_SCOPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    </div>
+                  )}
                 </>
               )}
 

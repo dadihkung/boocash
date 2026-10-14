@@ -11,6 +11,7 @@ Pastikan hal berikut sudah benar:
 - Untuk transfer setoran wishlist ke rekening tabungan, migration lanjutan `supabase/migrations/202610140002_wishlist_savings_transfer.sql` juga harus dijalankan.
 - Untuk mencatat setoran dana darurat sebagai transfer rekening dan progres target, jalankan juga migration `supabase/migrations/202610140003_emergency_fund_transactions.sql`.
 - Untuk membedakan uang Anda yang sedang dipegang pasangan, jalankan migration `supabase/migrations/202610140004_partner_holding_wallet.sql`. Migration ini menambahkan dompet virtual bersaldo nol dan aman dijalankan ulang.
+- Untuk memisahkan anggaran **Bersama / Saya / Pasangan**, jalankan migration `supabase/migrations/202610140005_budget_owner_scopes.sql` sebelum mencatat transaksi dengan versi aplikasi terbaru.
 - Tabel `wallets` berisi dompet dengan saldo awal yang benar. Untuk memakai setoran wishlist antar-rekening, pastikan ada rekening sumber dan rekening tabungan tujuan sebagai dua baris dompet yang berbeda. BooCash tidak membuat dompet secara otomatis.
 - Setelah mengubah skema atau migration, muat ulang halaman BooCash.
 
@@ -46,6 +47,20 @@ Contoh: gaji Rp5.000.000 masuk ke dompet virtual. Setelah kiriman Rp50.000 selam
 Jika gaji terlebih dahulu masuk ke Boo Mandiri baru kemudian dikirim ke pasangan, catat **Pemasukan → Gaji** ke Boo Mandiri, lalu catat **Transfer** dari Boo Mandiri ke dompet virtual sebesar uang yang diserahkan. Kiriman Rp50.000 berikutnya tetap dicatat sebagai transfer dari dompet virtual ke Boo Mandiri.
 
 Untuk mulai melacak uang yang sudah lebih dulu dititipkan sebelum BooCash digunakan, tekan ikon pensil pada dompet virtual setelah migration dijalankan dan masukkan hanya sisa uang Anda yang saat ini masih dipegang pasangan. Jangan masukkan total gaji historis jika sebagian sudah dikirim kembali atau sudah digunakan. Perubahan saldo ini tercatat sebagai penyesuaian pembuka, bukan pemasukan.
+
+### Anggaran bersama dan pribadi
+
+Anggaran bulanan dapat dibuat terpisah untuk **Bersama**, **Saya**, dan **Pasangan**. Pilih scope di bagian Anggaran Bulan Ini, lalu simpan batas per kategori untuk scope tersebut. Batas kategori pada satu scope tidak mengubah batas di scope lainnya.
+
+Setiap kali mencatat pengeluaran biasa, pilih **Pengeluaran ini untuk** dengan scope yang sama:
+
+- **Bersama** untuk kebutuhan rumah tangga atau biaya yang memang dibagi.
+- **Saya** untuk pengeluaran pribadi Anda.
+- **Pasangan** untuk pengeluaran pribadi pasangan yang sedang Anda catat.
+
+Progres anggaran hanya menghitung pengeluaran bulan berjalan dengan scope yang dipilih. Transfer, penyesuaian saldo, setoran wishlist, dan setoran dana darurat tidak dihitung sebagai pengeluaran anggaran. Pemasukan tidak memengaruhi anggaran kategori.
+
+Migration memberi transaksi lama label `Bersama` agar tetap terlihat pada anggaran gabungan. Anggaran lama yang tersimpan di browser juga dipertahankan di scope Bersama. Transaksi lama tidak dapat dibagi otomatis menjadi Saya/Pasangan karena informasi pemiliknya sebelumnya belum dicatat; mulai pilih scope pada transaksi baru. Pengaturan batas anggaran tetap tersimpan lokal per browser.
 
 ## 2. Aturan dasar pencatatan
 

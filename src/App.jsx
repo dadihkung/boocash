@@ -208,13 +208,18 @@ function App() {
         setToast('Rekening asal dan tujuan tidak boleh sama.');
         return;
       }
-      const isSavingsGoalDeposit = type === TRANSACTION_TYPES.EXPENSE && ['Wishlist Savings', 'Emergency Savings'].includes(category);
+      const isEmergencyAllocation = type === TRANSACTION_TYPES.EXPENSE && category === 'Emergency Savings';
+      const isWishlistDeposit = type === TRANSACTION_TYPES.EXPENSE && category === 'Wishlist Savings';
       const savingsTargetId = Number(savingsWalletId);
-      if (isSavingsGoalDeposit && (!selectedGoal || !savingsWalletId)) {
-        setToast('Pilih target tabungan dan rekening tabungan terlebih dahulu.');
+      if ((isEmergencyAllocation || isWishlistDeposit) && !selectedGoal) {
+        setToast('Pilih target tabungan terlebih dahulu.');
         return;
       }
-      if (isSavingsGoalDeposit && sourceWalletId === savingsTargetId) {
+      if (isWishlistDeposit && !savingsWalletId) {
+        setToast('Pilih rekening tujuan tabungan terlebih dahulu.');
+        return;
+      }
+      if (isWishlistDeposit && sourceWalletId === savingsTargetId) {
         setToast('Rekening sumber dan rekening tabungan harus berbeda.');
         return;
       }
@@ -231,8 +236,8 @@ function App() {
           : transactionDescription,
         p_target_wallet_id: type === TRANSACTION_TYPES.TRANSFER
           ? targetWalletId
-          : isSavingsGoalDeposit ? savingsTargetId : null,
-        p_goal_id: isSavingsGoalDeposit && selectedGoal
+          : isWishlistDeposit ? savingsTargetId : null,
+        p_goal_id: (isWishlistDeposit || isEmergencyAllocation) && selectedGoal
           ? Number(selectedGoal)
           : null,
         p_owner_scope: transactionOwnerScope
@@ -643,7 +648,8 @@ function App() {
 
         <div style={styles.historyList}>
           {transactions.slice(0, 3).map((tx) => {
-            const isExpense = tx.amount < 0;
+            const isEmergencyAllocation = tx.category === 'Emergency Savings' && Number(tx.goal_contribution) > 0;
+            const isExpense = tx.amount < 0 && !isEmergencyAllocation;
             const catLabel = t.cats[tx.category] || tx.category;
             return (
               <div key={tx.id} style={{ ...styles.historyCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
@@ -658,7 +664,9 @@ function App() {
                   <span style={{ fontSize: '0.7rem', color: theme.textSecondary, marginTop: '2px' }}>{formatDateStr(tx.created_at)}</span>
                 </div>
                 <span style={{ ...styles.txAmount, color: isExpense ? theme.expenseColor : theme.incomeColor }}>
-                  {isExpense ? '- ' : '+ '}Rp {Number(Math.abs(tx.amount)).toLocaleString('id-ID')}
+                  {isEmergencyAllocation
+                    ? `Alokasi Rp ${Number(tx.goal_contribution).toLocaleString('id-ID')}`
+                    : `${isExpense ? '- ' : '+ '}Rp ${Number(Math.abs(tx.amount)).toLocaleString('id-ID')}`}
                 </span>
               </div>
             );
@@ -670,7 +678,7 @@ function App() {
       {/* MODAL TRANSAKSI UTAMA */}
       {showTransactionModal && (
         <div style={styles.modalOverlay}>
-          <div style={{ ...styles.modalContent, backgroundColor: theme.bg, borderColor: theme.border }}>
+          <div style={{ ...styles.modalContent, maxHeight: 'min(90dvh, 760px)', boxSizing: 'border-box', overscrollBehavior: 'contain', backgroundColor: theme.bg, borderColor: theme.border }}>
             <div style={styles.modalHeader}>
               <h2 style={{ ...styles.modalTitle, color: theme.textMain }}>Catat Transaksi</h2>
               <button onClick={() => setShowTransactionModal(false)} style={{ ...styles.closeBtn, color: theme.textSecondary }}>✕</button>
@@ -701,7 +709,7 @@ function App() {
               ) : (
                 <>
                   <div style={styles.inputGroup}>
-                    <label style={{ ...styles.label, color: theme.textSecondary }}>Akun / Dompet</label>
+                    <label style={{ ...styles.label, color: theme.textSecondary }}>{category === 'Emergency Savings' ? 'Rekening tempat dana tetap disimpan' : 'Akun / Dompet'}</label>
                     <select value={selectedWallet} onChange={(e) => {
                       const nextWalletId = e.target.value;
                       setSelectedWallet(nextWalletId);
@@ -756,7 +764,7 @@ function App() {
                       Tutup form, lalu buat target bernama “Dana Darurat” dari tombol Kelola Wishlist.
                     </p>
                   )}
-                  <div style={styles.inputGroup}>
+                  {category === 'Wishlist Savings' && <div style={styles.inputGroup}>
                     <label style={{ ...styles.label, color: theme.accent }}>Pindahkan ke rekening tabungan</label>
                     <select value={savingsWalletId} onChange={(e) => setSavingsWalletId(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.accent, color: theme.textMain }} required>
                       <option value="" disabled>Pilih rekening tujuan</option>
@@ -764,7 +772,12 @@ function App() {
                         <option key={wallet.id} value={wallet.id}>{wallet.display_name || wallet.name}</option>
                       ))}
                     </select>
-                  </div>
+                  </div>}
+                  {category === 'Emergency Savings' && (
+                    <p style={{ color: theme.textSecondary, fontSize: '0.78rem', marginTop: '-8px' }}>
+                      Dana tetap berada di rekening ini. Jumlah yang dicatat hanya menambah alokasi dan progres target, tanpa mengubah saldo rekening.
+                    </p>
+                  )}
                 </>
               )}
 
@@ -773,7 +786,7 @@ function App() {
                 <input type="date" value={transactionDate} onChange={(e) => setTransactionDate(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }} />
               </div>
               <div style={styles.inputGroup}>
-                <label style={{ ...styles.label, color: theme.textSecondary }}>Jumlah Uang</label>
+                  <label style={{ ...styles.label, color: theme.textSecondary }}>{category === 'Emergency Savings' ? 'Jumlah alokasi dana darurat' : 'Jumlah Uang'}</label>
                 <div style={styles.amountInputWrapper}>
                   <span style={{ ...styles.currencyPrefix, color: theme.textMain }}>Rp</span>
                   <input type="text" inputMode="numeric" placeholder="0" value={amount} onChange={(e) => setAmount(formatThousand(e.target.value))} style={{ ...styles.amountInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }} required />
@@ -826,7 +839,8 @@ function App() {
 
             <div style={{ ...styles.historyList, maxHeight: '60vh', overflowY: 'auto', gap: '10px' }}>
               {filteredTransactions.map((tx) => {
-                const isExpense = tx.amount < 0;
+                const isEmergencyAllocation = tx.category === 'Emergency Savings' && Number(tx.goal_contribution) > 0;
+                const isExpense = tx.amount < 0 && !isEmergencyAllocation;
                 return (
                   <div key={tx.id} style={{ ...styles.historyCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
                     <div style={styles.txMeta}>
@@ -841,7 +855,9 @@ function App() {
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
                       <span style={{ ...styles.txAmount, color: isExpense ? theme.expenseColor : theme.incomeColor }}>
-                        {isExpense ? '- ' : '+ '}Rp {Number(Math.abs(tx.amount)).toLocaleString('id-ID')}
+                        {isEmergencyAllocation
+                          ? `Alokasi Rp ${Number(tx.goal_contribution).toLocaleString('id-ID')}`
+                          : `${isExpense ? '- ' : '+ '}Rp ${Number(Math.abs(tx.amount)).toLocaleString('id-ID')}`}
                       </span>
                       <button onClick={() => setPendingDelete({ kind: 'transaction', payload: tx })} style={{ background: 'none', border: 'none', color: theme.expenseColor, fontSize: '0.75rem', cursor: 'pointer', padding: 0 }}>
                         🗑️ Hapus

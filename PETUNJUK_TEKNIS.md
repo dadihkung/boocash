@@ -9,9 +9,10 @@ Pastikan hal berikut sudah benar:
 - Aplikasi terhubung ke project Supabase yang benar melalui `VITE_SUPABASE_URL` dan `VITE_SUPABASE_ANON_KEY`.
 - Migration `supabase/migrations/202610140001_financial_transactions.sql` sudah dijalankan di Supabase SQL Editor.
 - Untuk transfer setoran wishlist ke rekening tabungan, migration lanjutan `supabase/migrations/202610140002_wishlist_savings_transfer.sql` juga harus dijalankan.
-- Untuk mencatat setoran dana darurat sebagai transfer rekening dan progres target, jalankan juga migration `supabase/migrations/202610140003_emergency_fund_transactions.sql`.
+- Migration `supabase/migrations/202610140003_emergency_fund_transactions.sql` adalah implementasi lama dana darurat sebagai transfer. Jika sudah pernah dijalankan, biarkan saja; migration 006 menggantikan perilakunya untuk pencatatan baru.
 - Untuk membedakan uang Anda yang sedang dipegang pasangan, jalankan migration `supabase/migrations/202610140004_partner_holding_wallet.sql`. Migration ini menambahkan dompet virtual bersaldo nol dan aman dijalankan ulang.
 - Untuk memisahkan anggaran **Bersama / Saya / Pasangan**, jalankan migration `supabase/migrations/202610140005_budget_owner_scopes.sql` sebelum mencatat transaksi dengan versi aplikasi terbaru.
+- Untuk mencatat dana darurat sebagai alokasi yang tetap berada di rekening yang sama, jalankan migration lanjutan `supabase/migrations/202610140006_emergency_fund_allocation.sql`.
 - Tabel `wallets` berisi dompet dengan saldo awal yang benar. Untuk memakai setoran wishlist antar-rekening, pastikan ada rekening sumber dan rekening tabungan tujuan sebagai dua baris dompet yang berbeda. BooCash tidak membuat dompet secara otomatis.
 - Setelah mengubah skema atau migration, muat ulang halaman BooCash.
 
@@ -156,18 +157,22 @@ Buat target terlebih dahulu bila target belum tersedia:
 3. Kolom **Sudah Terkumpul Inisial** boleh diisi untuk saldo tabungan yang sudah ada sebelum pencatatan BooCash. Nilai awal ini bukan transaksi riwayat.
 4. Simpan target.
 
-Untuk mencatat setoran wishlist atau dana darurat:
+Untuk mencatat setoran wishlist:
 
 1. Tambah transaksi sebagai **Pengeluaran**.
 2. Pilih rekening sumber, biasanya rekening harian/bulanan.
-3. Pilih kategori **Tabungan Wishlist** atau **Tabungan Dana Darurat**.
-4. Untuk **Tabungan Dana Darurat**, pilih target yang namanya mengandung `Dana Darurat` atau `Emergency`. Jika belum ada, tutup form lalu buat target bernama `Dana Darurat` dari **Kelola**; kategori darurat tidak akan diarahkan ke target wishlist lain.
+3. Pilih kategori **Tabungan Wishlist**.
+4. Pilih target wishlist yang menerima setoran.
 5. Pilih rekening tujuan tabungan, misalnya rekening tabungan Blue BCA. BooCash memilih rekening dengan nama Blu/Blue BCA sebagai tujuan awal bila tersedia, tetapi tetap periksa tujuan. Rekening sumber dan tujuan harus berbeda.
 6. Masukkan jumlah dan tanggal, tambahkan catatan bila perlu, lalu simpan sekali.
 
-Setoran membuat dua baris transfer yang terhubung dalam satu RPC: saldo rekening sumber berkurang, saldo rekening tabungan bertambah, dan progres target bertambah satu kali. Kedua baris tampil sebagai transfer, tidak dihitung sebagai belanja/pemasukan/anggaran, dan jika salah satu dihapus maka pasangan transfer serta progres target dibalik bersama-sama. Fitur setoran wishlist memerlukan migration `202610140002_wishlist_savings_transfer.sql`; kategori dana darurat memerlukan migration lanjutan `202610140003_emergency_fund_transactions.sql`. Jangan catat setoran yang sama lagi sebagai transfer manual, karena itu akan menggandakan perpindahan saldo.
+Setoran wishlist membuat dua baris transfer yang terhubung dalam satu RPC: saldo rekening sumber berkurang, saldo rekening tabungan bertambah, dan progres target bertambah satu kali. Jika salah satu dihapus, pasangan transfer serta progres target dibalik bersama-sama. Fitur ini memerlukan migration `202610140002_wishlist_savings_transfer.sql`. Jangan catat setoran yang sama lagi sebagai transfer manual.
 
-Jika setoran salah, hapus salah satu baris transfernya selagi target masih ada. RPC menghapus pasangan, trigger membalik saldo kedua rekening dan progres target. **Jangan hapus target lebih dahulu jika masih ada transaksi setoran yang terkait.** Setelah target dihapus, transaksi lama tetap ada, tetapi pembalikan progres saat menghapus transaksi terkait dapat gagal karena targetnya sudah tidak ditemukan.
+Untuk mencatat **Dana Darurat**, pilih **Pengeluaran → Tabungan Dana Darurat**, pilih rekening tempat uang itu memang berada, target bernama `Dana Darurat`/`Emergency`, lalu isi jumlah alokasinya. Dana tidak dipindahkan ke rekening lain dan saldo rekening tidak berkurang; aplikasi membuat catatan alokasi khusus yang menaikkan progres target. Nilai alokasi terlihat di riwayat. Jika catatan alokasi dihapus, progres target dikurangi kembali, saldo rekening tetap.
+
+Alur alokasi Dana Darurat memerlukan migration `202610140006_emergency_fund_allocation.sql` setelah migration transaksi sebelumnya. Migration `202610140003_emergency_fund_transactions.sql` yang lama membuat transfer untuk dana darurat, tetapi versi aplikasi terbaru memakai migration 006 untuk mengubah perilaku menjadi alokasi tanpa pemindahan. Jalankan migration 006 sebelum memakai kategori tersebut.
+
+Jika setoran wishlist salah, hapus salah satu baris transfernya selagi target masih ada. RPC menghapus pasangan, trigger membalik saldo kedua rekening dan progres target. Jika alokasi Dana Darurat salah, hapus baris alokasinya; progres target dibalik dan saldo rekening tidak berubah. **Jangan hapus target lebih dahulu jika masih ada transaksi setoran/alokasi yang terkait.** Setelah target dihapus, pembalikan progres saat menghapus transaksi terkait dapat gagal karena targetnya sudah tidak ditemukan.
 
 Saat mengedit target, nilai **Sudah Terkumpul Inisial** mengganti angka progres saat ini secara langsung. Gunakan hanya untuk koreksi/manual baseline; perubahan ini bukan transaksi dan tidak menambah riwayat.
 
@@ -225,7 +230,8 @@ Anggaran saat ini disimpan di `localStorage` browser, bukan Supabase. Anggaran t
 ## 11. Kondisi gagal atau tampilan belum berubah
 
 - **Notifikasi `Gagal menyimpan` / fungsi RPC tidak ditemukan**: pastikan migration sudah berhasil dijalankan pada project Supabase yang sama dengan project di `.env`, lalu muat ulang aplikasi.
-- **Setoran wishlist/dana darurat gagal meminta rekening tabungan**: pastikan rekening sumber dan rekening tujuan (misalnya Blue BCA) sudah ada sebagai dua dompet berbeda di `wallets`, target tabungan sudah dibuat, migration `202610140002_wishlist_savings_transfer.sql` sudah dijalankan, dan untuk dana darurat migration `202610140003_emergency_fund_transactions.sql` juga sudah dijalankan.
+- **Setoran wishlist gagal meminta rekening tabungan**: pastikan rekening sumber dan rekening tujuan (misalnya Blue BCA) sudah ada sebagai dua dompet berbeda di `wallets`, target tabungan sudah dibuat, dan migration `202610140002_wishlist_savings_transfer.sql` sudah dijalankan.
+- **Alokasi Dana Darurat gagal disimpan**: pastikan target bernama `Dana Darurat`/`Emergency` tersedia dan migration `202610140006_emergency_fund_allocation.sql` sudah dijalankan setelah migration transaksi sebelumnya.
 - **Izin ditolak/RLS error**: jangan menonaktifkan RLS atau menempelkan service-role key di frontend. Periksa policy Supabase dan kirim pesan error lengkap untuk diagnosis.
 - **Saldo tidak berubah atau berubah tidak semestinya**: jangan mengulang transaksi berkali-kali. Periksa riwayat terlebih dahulu; transaksi/RPC dapat berhasil meskipun halaman belum memperbarui tampilan. Muat ulang halaman dan bandingkan riwayat serta saldo.
 - **Daftar dompet atau target kosong**: pastikan tabel `wallets` atau `savings_goals` memiliki data dan akses baca diizinkan oleh policy Supabase.

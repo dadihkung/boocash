@@ -251,14 +251,17 @@ function App() {
   };
 
   // --- DELETE TRANSACTION ---
-  const handleDeleteTransaction = async (tx) => {
+const handleDeleteTransaction = async (tx) => {
     setDeletingTxId(tx.id);
     try {
       const { error } = await supabase.rpc('delete_financial_transaction', { p_transaction_id: tx.id });
       if (error) throw error;
 
-      // Hapus langsung dari state agar Riwayat Terakhir & Semua Riwayat langsung terupdate
-      setTransactions((prev) => prev.filter((item) => item.id !== tx.id));
+      setTransactions((prev) =>
+        prev.filter((item) =>
+          tx.transfer_id ? item.transfer_id !== tx.transfer_id : item.id !== tx.id
+        )
+      );
       await fetchData();
       setToast('Transaksi berhasil dihapus.');
     } catch (error) {

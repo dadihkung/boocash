@@ -39,6 +39,10 @@ const normalizeBudgetLimits = (storedBudgets) => Object.fromEntries(
   })
 );
 
+const isJointWalletRecord = (wallet) => /rek\s*gabungan|gabungan/i.test(`${wallet?.display_name || ''} ${wallet?.name || ''}`);
+const isDanaBeeWallet = (wallet) => /dana\s*bee/i.test(`${wallet?.display_name || ''} ${wallet?.name || ''}`);
+const isBooMandiriWallet = (wallet) => /boo\s*mandiri/i.test(`${wallet?.display_name || ''} ${wallet?.name || ''}`);
+
 function App() {
   const [showGreeting, setShowGreeting] = useState(true);
 
@@ -110,6 +114,32 @@ function App() {
 
   const t = { cats: CATEGORY_LABELS };
 
+  // Rekening fisik nyata (mengecualikan baris Rek Gabungan jika sempat dibuat di DB)
+  const physicalWallets = useMemo(
+    () => wallets.filter((wallet) => !isJointWalletRecord(wallet)),
+    [wallets]
+  );
+
+  // Gabungan tampilan otomatis: Dana Bee + Boo Mandiri
+  const displayWallets = useMemo(() => {
+    const danaBee = physicalWallets.find(isDanaBeeWallet);
+    const booMandiri = physicalWallets.find(isBooMandiriWallet);
+
+    if (!danaBee && !booMandiri) return physicalWallets;
+
+    const combinedBalance = Number(danaBee?.balance || 0) + Number(booMandiri?.balance || 0);
+    const virtualJointWallet = {
+      id: 'virtual_rek_gabungan',
+      name: 'rek_gabungan',
+      display_name: 'Rek Gabungan',
+      icon: '💑',
+      balance: combinedBalance,
+      isVirtual: true
+    };
+
+    return [...physicalWallets, virtualJointWallet];
+  }, [physicalWallets]);
+
   const formatThousand = (val) => {
     if (val === '' || val === null || val === undefined) return '';
     const clean = val.toString().replace(/\D/g, '');
@@ -128,7 +158,7 @@ function App() {
   };
 
   const getWalletBadge = (id) => {
-    const wallet = wallets.find((item) => item.id === id);
+    const wallet = physicalWallets.find((item) => item.id === id);
     if (!wallet) return '';
     return `${wallet.icon || '🏦'} ${wallet.display_name || wallet.name}`;
   };
@@ -139,23 +169,15 @@ function App() {
       if (wError) throw wError;
       setWallets(walletData);
 
-      if (walletData.length > 0) {
-        const sourceId = Number(selectedWallet || walletData[0].id);
-        const jointWallet = walletData.find((wallet) =>
-          wallet.id !== sourceId && /rek\s*gabungan|gabungan|mandiri\s*boo|boo\s*mandiri/i.test(`${wallet.display_name || ''} ${wallet.name || ''}`)
-        );
-
-        if (!selectedWallet) setSelectedWallet(walletData[0].id.toString());
-        if (!targetWallet) {
-          const defaultTarget = jointWallet || walletData.find((wallet) => wallet.id !== walletData[0].id) || walletData[0];
-          setTargetWallet(defaultTarget.id.toString());
-        }
+      const usableWallets = walletData.filter((wallet) => !isJointWalletRecord(wallet));
+      if (usableWallets.length > 0) {
+        if (!selectedWallet) setSelectedWallet(usableWallets[0].id.toString());
+        if (!targetWallet && usableWallets[1]) setTargetWallet(usableWallets[1].id.toString());
         if (!savingsWalletId) {
-          const savingsWallet = jointWallet
-            || walletData.find((wallet) =>
-              wallet.id !== sourceId && /blu|blue\s*bca/i.test(`${wallet.display_name || ''} ${wallet.name || ''}`)
-            )
-            || walletData.find((wallet) => wallet.id !== sourceId);
+          const sourceId = Number(selectedWallet || usableWallets[0].id);
+          const savingsWallet = usableWallets.find((wallet) =>
+            wallet.id !== sourceId && /blu|blue\s*bca/i.test(`${wallet.display_name || ''} ${wallet.name || ''}`)
+          ) || usableWallets.find((wallet) => wallet.id !== sourceId);
           if (savingsWallet) setSavingsWalletId(savingsWallet.id.toString());
         }
       }
@@ -232,7 +254,7 @@ function App() {
         setToast('Rekening sumber dan rekening tabungan harus berbeda.');
         return;
       }
-      const destinationWallet = wallets.find((wallet) => wallet.id === targetWalletId);
+      const destinationWallet = physicalWallets.find((wallet) => wallet.id === targetWalletId);
       const transactionDescription = description;
       const { error } = await supabase.rpc('record_financial_transaction', {
         p_wallet_id: sourceWalletId,
@@ -283,7 +305,7 @@ function App() {
   // --- EDIT BALANCE HANDLER ---
   const handleEditBalanceSubmit = async (e) => {
     e.preventDefault();
-    if (!editingWallet) return;
+    if (!editingWallet || editingWallet.isVirtual) return;
 
     const numericNewBalance = parseRawNumber(newBalanceInput);
     const currentBalance = parseFloat(editingWallet.balance);
@@ -378,9 +400,16 @@ function App() {
     const currentMonth = monthKey(today);
     const currentYear = String(today.getFullYear());
 
+    const danaBeeId = physicalWallets.find(isDanaBeeWallet)?.id;
+    const booMandiriId = physicalWallets.find(isBooMandiriWallet)?.id;
+
     return transactions.filter((tx) => {
       const txDate = dateKey(tx.created_at);
-      const matchesWallet = dashboardWalletId === 'All' || tx.wallet_id === Number(dashboardWalletId);
+      const matchesWallet = dashboardWalletId === 'All'
+        ? true
+        : dashboardWalletId === 'virtual_rek_gabungan'
+          ? [danaBeeId, booMandiriId].includes(tx.wallet_id)
+          : tx.wallet_id === Number(dashboardWalletId);
       let matchesPeriod = true;
       if (periodFilter === '7days' || periodFilter === '30days') matchesPeriod = txDate >= startKey && txDate <= todayKey;
       if (periodFilter === 'month') matchesPeriod = txDate.startsWith(currentMonth);
@@ -390,7 +419,7 @@ function App() {
       }
       return matchesWallet && matchesPeriod;
     });
-  }, [transactions, dashboardWalletId, periodFilter, customStartDate, customEndDate]);
+  }, [transactions, physicalWallets, dashboardWalletId, periodFilter, customStartDate, customEndDate]);
 
   const chartData = useMemo(() => {
     const totals = dashboardTransactions.reduce((acc, tx) => {
@@ -483,10 +512,18 @@ function App() {
 
       {/* BALANCE SECTION */}
       <WalletList
-        wallets={wallets}
+        wallets={displayWallets}
         theme={theme}
         formatAmount={formatThousand}
-        onEdit={(wallet) => { setEditingWallet(wallet); setNewBalanceInput(formatThousand(wallet.balance)); setShowBalanceModal(true); }}
+        onEdit={(wallet) => {
+          if (wallet.isVirtual) {
+            setToast('Rek Gabungan otomatis menjumlahkan Dana Bee + Boo Mandiri.');
+            return;
+          }
+          setEditingWallet(wallet);
+          setNewBalanceInput(formatThousand(wallet.balance));
+          setShowBalanceModal(true);
+        }}
       />
 
       {/* MODAL EDIT SALDO */}
@@ -498,7 +535,7 @@ function App() {
               <button onClick={() => setShowBalanceModal(false)} style={{ ...styles.closeBtn, color: theme.textSecondary }}>✕</button>
             </div>
             <p style={{ fontSize: '0.8rem', color: theme.textSecondary, marginBottom: '20px', lineHeight: '1.4' }}>
-              Masukkan jumlah saldo <strong>asli</strong> saat ini (termasuk cek fisik rekening Boo Mandiri). Sistem akan otomatis menghitung selisihnya dan mencatatnya sebagai transaksi penyesuaian agar pembukuan tetap seimbang.
+              Masukkan jumlah saldo <strong>asli</strong> saat ini. Sistem akan otomatis menghitung selisihnya dan mencatatnya sebagai transaksi penyesuaian agar pembukuan tetap seimbang.
             </p>
             <form onSubmit={handleEditBalanceSubmit} style={styles.flexForm}>
               <div style={styles.inputGroup}>
@@ -535,7 +572,7 @@ function App() {
               style={{ ...styles.minimalInput, flex: 1, padding: '6px 10px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
             >
               <option value="All">Semua Rekening</option>
-              {wallets.map((w) => (
+              {displayWallets.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.display_name || w.name}
                 </option>
@@ -726,13 +763,13 @@ function App() {
                   <div style={styles.inputGroup}>
                     <label style={{ ...styles.label, color: theme.textSecondary }}>Dari Rekening</label>
                     <select value={selectedWallet} onChange={(e) => setSelectedWallet(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}>
-                      {wallets.map((w) => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
+                      {physicalWallets.map((w) => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
                     </select>
                   </div>
                   <div style={styles.inputGroup}>
                     <label style={{ ...styles.label, color: theme.accent }}>Ke Rekening</label>
                     <select value={targetWallet} onChange={(e) => setTargetWallet(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.accent, color: theme.textMain }}>
-                      {wallets.map((w) => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
+                      {physicalWallets.map((w) => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
                     </select>
                   </div>
                 </>
@@ -744,10 +781,10 @@ function App() {
                       const nextWalletId = e.target.value;
                       setSelectedWallet(nextWalletId);
                       if (Number(savingsWalletId) === Number(nextWalletId)) {
-                        setSavingsWalletId(wallets.find((wallet) => wallet.id !== Number(nextWalletId))?.id.toString() || '');
+                        setSavingsWalletId(physicalWallets.find((wallet) => wallet.id !== Number(nextWalletId))?.id.toString() || '');
                       }
                     }} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}>
-                      {wallets.map((w) => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
+                      {physicalWallets.map((w) => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
                     </select>
                   </div>
                   <div style={styles.inputGroup}>
@@ -798,7 +835,7 @@ function App() {
                     <label style={{ ...styles.label, color: theme.accent }}>Pindahkan ke rekening tabungan</label>
                     <select value={savingsWalletId} onChange={(e) => setSavingsWalletId(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.accent, color: theme.textMain }} required>
                       <option value="" disabled>Pilih rekening tujuan</option>
-                      {wallets.filter((wallet) => wallet.id !== Number(selectedWallet)).map((wallet) => (
+                      {physicalWallets.filter((wallet) => wallet.id !== Number(selectedWallet)).map((wallet) => (
                         <option key={wallet.id} value={wallet.id}>{wallet.display_name || wallet.name}</option>
                       ))}
                     </select>

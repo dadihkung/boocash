@@ -140,13 +140,22 @@ function App() {
       setWallets(walletData);
 
       if (walletData.length > 0) {
+        const sourceId = Number(selectedWallet || walletData[0].id);
+        const jointWallet = walletData.find((wallet) =>
+          wallet.id !== sourceId && /rek\s*gabungan|gabungan|mandiri\s*boo|boo\s*mandiri/i.test(`${wallet.display_name || ''} ${wallet.name || ''}`)
+        );
+
         if (!selectedWallet) setSelectedWallet(walletData[0].id.toString());
-        if (!targetWallet && walletData[1]) setTargetWallet(walletData[1].id.toString());
+        if (!targetWallet) {
+          const defaultTarget = jointWallet || walletData.find((wallet) => wallet.id !== walletData[0].id) || walletData[0];
+          setTargetWallet(defaultTarget.id.toString());
+        }
         if (!savingsWalletId) {
-          const sourceId = Number(selectedWallet || walletData[0].id);
-          const savingsWallet = walletData.find((wallet) =>
-            wallet.id !== sourceId && /blu|blue\s*bca/i.test(`${wallet.display_name || ''} ${wallet.name || ''}`)
-          ) || walletData.find((wallet) => wallet.id !== sourceId);
+          const savingsWallet = jointWallet
+            || walletData.find((wallet) =>
+              wallet.id !== sourceId && /blu|blue\s*bca/i.test(`${wallet.display_name || ''} ${wallet.name || ''}`)
+            )
+            || walletData.find((wallet) => wallet.id !== sourceId);
           if (savingsWallet) setSavingsWalletId(savingsWallet.id.toString());
         }
       }
@@ -251,7 +260,7 @@ function App() {
   };
 
   // --- DELETE TRANSACTION ---
-const handleDeleteTransaction = async (tx) => {
+  const handleDeleteTransaction = async (tx) => {
     setDeletingTxId(tx.id);
     try {
       const { error } = await supabase.rpc('delete_financial_transaction', { p_transaction_id: tx.id });
@@ -489,7 +498,7 @@ const handleDeleteTransaction = async (tx) => {
               <button onClick={() => setShowBalanceModal(false)} style={{ ...styles.closeBtn, color: theme.textSecondary }}>✕</button>
             </div>
             <p style={{ fontSize: '0.8rem', color: theme.textSecondary, marginBottom: '20px', lineHeight: '1.4' }}>
-              Masukkan jumlah saldo <strong>asli</strong> saat ini. Sistem akan otomatis menghitung selisihnya dan mencatatnya sebagai transaksi penyesuaian agar pembukuan tetap seimbang.
+              Masukkan jumlah saldo <strong>asli</strong> saat ini (termasuk cek fisik rekening Boo Mandiri). Sistem akan otomatis menghitung selisihnya dan mencatatnya sebagai transaksi penyesuaian agar pembukuan tetap seimbang.
             </p>
             <form onSubmit={handleEditBalanceSubmit} style={styles.flexForm}>
               <div style={styles.inputGroup}>

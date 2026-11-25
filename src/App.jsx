@@ -117,9 +117,15 @@ const normalizeBudgetLimits = (storedBudgets) => Object.fromEntries(
   })
 );
 
-const isJointWalletRecord = (wallet) => /rek\s*gabungan|gabungan/i.test(`${wallet?.display_name || ''} ${wallet?.name || ''}`);
-const isDanaBeeWallet = (wallet) => /dana\s*bee/i.test(`${wallet?.display_name || ''} ${wallet?.name || ''}`);
-const isBooMandiriWallet = (wallet) => /boo\s*mandiri/i.test(`${wallet?.display_name || ''} ${wallet?.name || ''}`);
+const getWalletFullLabel = (wallet) => `${wallet?.display_name || ''} ${wallet?.name || ''}`.trim();
+const isJointWalletRecord = (wallet) => /rek\s*gabungan|gabungan/i.test(getWalletFullLabel(wallet));
+const isDanaBeeWallet = (wallet) => /dana\s*bee/i.test(getWalletFullLabel(wallet));
+const isBooMandiriWallet = (wallet) => /boo\s*mandiri/i.test(getWalletFullLabel(wallet));
+const isBeeBluWallet = (wallet) => /^bee\s*blu\s*bca$/i.test(getWalletFullLabel(wallet)) || /bee\s*blu\s*bca/i.test(getWalletFullLabel(wallet));
+const isBooBluWallet = (wallet) => /^boo\s*blu(?:e)?\s*bca$/i.test(getWalletFullLabel(wallet)) || /boo\s*blu(?:e)?\s*bca/i.test(getWalletFullLabel(wallet));
+
+const isAyoNikahGoal = (goal) => /ayo\s*nikah/i.test(goal?.item_name || '');
+const isRenovasiRumahGoal = (goal) => /renovasi\s*rumah/i.test(goal?.item_name || '');
 
 function App() {
   const [showGreeting, setShowGreeting] = useState(true);
@@ -225,6 +231,35 @@ function App() {
     [wallets]
   );
 
+  const beeBluWallet = useMemo(
+    () => physicalWallets.find(isBeeBluWallet),
+    [physicalWallets]
+  );
+
+  const booBluWallet = useMemo(
+    () => physicalWallets.find(isBooBluWallet),
+    [physicalWallets]
+  );
+
+  const getLinkedSavingsWalletForGoal = (goalId) => {
+    const goal = goals.find((item) => String(item.id) === String(goalId));
+    if (!goal) return null;
+    if (isAyoNikahGoal(goal) && beeBluWallet) return beeBluWallet;
+    if (isRenovasiRumahGoal(goal) && booBluWallet) return booBluWallet;
+    return null;
+  };
+
+  // Nominal terkumpul otomatis ngikut saldo rekening masing-masing setelah setiap perubahan transaksi/saldo
+  const getEffectiveGoalSaved = (goal) => {
+    if (isAyoNikahGoal(goal) && beeBluWallet) {
+      return Math.max(0, Number(beeBluWallet.balance || 0));
+    }
+    if (isRenovasiRumahGoal(goal) && booBluWallet) {
+      return Math.max(0, Number(booBluWallet.balance || 0));
+    }
+    return Math.max(0, Number(goal?.current_saved || 0));
+  };
+
   const displayWallets = useMemo(() => {
     const danaBee = physicalWallets.find(isDanaBeeWallet);
     const booMandiri = physicalWallets.find(isBooMandiriWallet);
@@ -287,7 +322,7 @@ function App() {
         if (!savingsWalletId) {
           const sourceId = Number(selectedWallet || usableWallets[0].id);
           const savingsWallet = usableWallets.find((wallet) =>
-            wallet.id !== sourceId && /blu|blue\s*bca/i.test(`${wallet.display_name || ''} ${wallet.name || ''}`)
+            wallet.id !== sourceId && /blu|blue\s*bca/i.test(getWalletFullLabel(wallet))
           ) || usableWallets.find((wallet) => wallet.id !== sourceId);
           if (savingsWallet) setSavingsWalletId(savingsWallet.id.toString());
         }
@@ -397,7 +432,7 @@ function App() {
 
       setAmount(''); setDescription(''); setShowTransactionModal(false);
       await fetchData();
-      setToast('Catatan berhasil ditambahkan.');
+      setToast('Catatan berhasil ditambahkan & saldo wishlist diperbarui.');
     } catch (error) { setToast('Gagal menyimpan: ' + error.message); } finally { setSubmitting(false); }
   };
 
@@ -414,7 +449,7 @@ function App() {
         )
       );
       await fetchData();
-      setToast('Transaksi berhasil dihapus.');
+      setToast('Transaksi berhasil dihapus & saldo wishlist diperbarui.');
     } catch (error) {
       setToast('Gagal menghapus: ' + (error.message || JSON.stringify(error)));
     } finally {
@@ -473,7 +508,7 @@ function App() {
 
   const resetCrudForm = () => { setGoalIdToEdit(null); setWishlistItemName(''); setWishlistTargetAmount(''); setWishlistCurrentSaved(''); };
   const handleEditClick = (goal) => {
-    setGoalIdToEdit(goal.id); setWishlistItemName(goal.item_name); setWishlistTargetAmount(goal.target_amount.toString()); setWishlistCurrentSaved(goal.current_saved.toString()); setShowWishlistCrud(true);
+    setGoalIdToEdit(goal.id); setWishlistItemName(goal.item_name); setWishlistTargetAmount(goal.target_amount.toString()); setWishlistCurrentSaved(getEffectiveGoalSaved(goal).toString()); setShowWishlistCrud(true);
   };
   const handleDeleteWishlist = async (id) => {
     try {
@@ -870,7 +905,7 @@ function App() {
         + Tambah Transaksi
       </button>
 
-      {/* WISHLIST SECTION */}
+      {/* WISHLIST SECTION (TERKUMPUL DARI TABUNGAN BLU BCA MASING-MASING) */}
       <section style={styles.wishlistSection}>
         <div style={styles.wishlistHeaderRow}>
           <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>🎯 Target Wishlist Kita</h3>
@@ -880,18 +915,32 @@ function App() {
         </div>
         <div style={styles.goalsGrid}>
           {goals.map((goal) => {
-            const pct = Math.min(Math.round((goal.current_saved / goal.target_amount) * 100), 100) || 0;
+            const effectiveSaved = getEffectiveGoalSaved(goal);
+            const pct = Math.min(Math.round((effectiveSaved / goal.target_amount) * 100), 100) || 0;
+            const linkedWalletLabel = isAyoNikahGoal(goal) && beeBluWallet
+              ? (beeBluWallet.display_name || beeBluWallet.name)
+              : isRenovasiRumahGoal(goal) && booBluWallet
+                ? (booBluWallet.display_name || booBluWallet.name)
+                : null;
+
             return (
               <div key={goal.id} style={{ ...styles.goalCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
                 <div style={styles.goalInfoRow}>
-                  <span style={{ ...styles.goalName, color: theme.textMain }}>{goal.item_name}</span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span style={{ ...styles.goalName, color: theme.textMain }}>{goal.item_name}</span>
+                    {linkedWalletLabel && (
+                      <span style={{ fontSize: '0.68rem', color: theme.textSecondary }}>
+                        Rekening: {linkedWalletLabel}
+                      </span>
+                    )}
+                  </div>
                   <span style={{ ...styles.goalPct, color: theme.accent }}>{pct}%</span>
                 </div>
                 <div style={{ ...styles.progressTrack, backgroundColor: theme.inputBg }}>
                   <div style={{ ...styles.progressBar, width: `${pct}%`, backgroundColor: theme.accent }} />
                 </div>
                 <div style={styles.goalAmountRow}>
-                  <span style={{ color: theme.textSecondary }}>Rp {Number(goal.current_saved).toLocaleString('id-ID')}</span>
+                  <span style={{ color: theme.textSecondary }}>Rp {Number(effectiveSaved).toLocaleString('id-ID')}</span>
                   <span style={{ color: theme.textSecondary, opacity: 0.6 }}>target: Rp {Number(goal.target_amount).toLocaleString('id-ID')}</span>
                 </div>
               </div>
@@ -1024,6 +1073,12 @@ function App() {
                         const emergencyGoal = goals.find((goal) => /darurat|emergency/i.test(goal.item_name));
                         setSelectedGoal(emergencyGoal ? emergencyGoal.id.toString() : '');
                       }
+                      if (nextCategory === 'Wishlist Savings' && selectedGoal) {
+                        const linkedWallet = getLinkedSavingsWalletForGoal(selectedGoal);
+                        if (linkedWallet && linkedWallet.id !== Number(selectedWallet)) {
+                          setSavingsWalletId(linkedWallet.id.toString());
+                        }
+                      }
                     }} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}>
                       {type === TRANSACTION_TYPES.INCOME
                         ? INCOME_CATEGORIES.map(([key, label]) => <option key={key} value={key}>{label}</option>)
@@ -1045,7 +1100,21 @@ function App() {
                 <>
                   <div style={styles.inputGroup}>
                     <label style={{ ...styles.label, color: theme.accent }}>Pilih Target Tabungan</label>
-                    <select value={selectedGoal} onChange={(e) => setSelectedGoal(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.accent, color: theme.textMain }} required>
+                    <select
+                      value={selectedGoal}
+                      onChange={(e) => {
+                        const nextGoalId = e.target.value;
+                        setSelectedGoal(nextGoalId);
+                        if (category === 'Wishlist Savings') {
+                          const linkedWallet = getLinkedSavingsWalletForGoal(nextGoalId);
+                          if (linkedWallet && linkedWallet.id !== Number(selectedWallet)) {
+                            setSavingsWalletId(linkedWallet.id.toString());
+                          }
+                        }
+                      }}
+                      style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.accent, color: theme.textMain }}
+                      required
+                    >
                       <option value="" disabled>
                         {category === 'Emergency Savings' ? 'Buat target Dana Darurat dulu' : 'Pilih target'}
                       </option>
@@ -1197,7 +1266,7 @@ function App() {
             <form onSubmit={handleSaveWishlist} style={styles.flexForm}>
               <div style={styles.inputGroup}>
                 <label style={{ ...styles.label, color: theme.textSecondary }}>Nama Item / Keperluan</label>
-                <input type="text" placeholder="Contoh: Liburan Bareng ✈️" value={wishlistItemName} onChange={(e) => setWishlistItemName(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }} required />
+                <input type="text" placeholder="Contoh: Ayo Nikah 💍" value={wishlistItemName} onChange={(e) => setWishlistItemName(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }} required />
               </div>
               <div style={styles.inputGroup}>
                 <label style={{ ...styles.label, color: theme.textSecondary }}>Target Angka (Rp)</label>
@@ -1220,7 +1289,9 @@ function App() {
                 <div key={g.id} style={{ ...styles.crudRow, backgroundColor: theme.cardBg, borderColor: theme.border }}>
                   <div style={styles.crudInfo}>
                     <span style={{ ...styles.crudName, color: theme.textMain }}>{g.item_name}</span>
-                    <span style={{ fontSize: '0.75rem', color: theme.textSecondary }}>Target: Rp {Number(g.target_amount).toLocaleString('id-ID')}</span>
+                    <span style={{ fontSize: '0.75rem', color: theme.textSecondary }}>
+                      Terkumpul: Rp {Number(getEffectiveGoalSaved(g)).toLocaleString('id-ID')} / Target: Rp {Number(g.target_amount).toLocaleString('id-ID')}
+                    </span>
                   </div>
                   <div style={styles.crudButtons}>
                     <button onClick={() => handleEditClick(g)} style={{ ...styles.iconBtn, color: '#eab308' }}>✏️</button>

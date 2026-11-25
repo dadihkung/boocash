@@ -33,10 +33,34 @@ const dateKey = (value) => String(value || '').slice(0, 10);
 const localDateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const monthKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 
+const addDaysToDateKey = (isoDateStr, days) => {
+  const base = new Date(`${isoDateStr}T12:00:00`);
+  if (Number.isNaN(base.getTime())) return isoDateStr;
+  base.setDate(base.getDate() + days);
+  return localDateKey(base);
+};
+
+const getNextPaydayDateKey = (paydayStartStr) => {
+  const start = new Date(`${paydayStartStr}T12:00:00`);
+  if (Number.isNaN(start.getTime())) return paydayStartStr;
+  const targetDay = start.getDate();
+  const nextMonthFirst = new Date(start.getFullYear(), start.getMonth() + 1, 1, 12, 0, 0);
+  const daysInNextMonth = new Date(nextMonthFirst.getFullYear(), nextMonthFirst.getMonth() + 1, 0).getDate();
+  const clampedDay = Math.min(targetDay, daysInNextMonth);
+  const nextPayday = new Date(nextMonthFirst.getFullYear(), nextMonthFirst.getMonth(), clampedDay, 12, 0, 0);
+  return addDaysToDateKey(localDateKey(nextPayday), -1);
+};
+
+const formatShortDateId = (isoDateStr) => {
+  if (!isoDateStr) return '';
+  const d = new Date(`${isoDateStr}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return isoDateStr;
+  return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+};
+
 const parseSortableTimestamp = (tx) => {
   const raw = tx?.created_at;
   if (!raw) return 0;
-  // Jika hanya format YYYY-MM-DD tanpa jam, beri jam 12:00:00 agar perbandingan zona waktu stabil
   const normalized = /^\d{4}-\d{2}-\d{2}$/.test(String(raw).trim())
     ? `${String(raw).trim()}T12:00:00`
     : String(raw);
@@ -51,9 +75,9 @@ const compareTransactionsDesc = (a, b) => {
 };
 
 const normalizeBudgetLimits = (storedBudgets) => Object.fromEntries(
-  Object.entries(storedBudgets).map(([month, scopes]) => {
+  Object.entries(storedBudgets).map(([cycleId, scopes]) => {
     const isLegacyBudget = Object.values(scopes || {}).every((value) => typeof value !== 'object' || value === null);
-    return [month, isLegacyBudget ? { shared: scopes } : scopes];
+    return [cycleId, isLegacyBudget ? { shared: scopes } : scopes];
   })
 );
 
@@ -93,6 +117,24 @@ function App() {
   const [showBalanceModal, setShowBalanceModal] = useState(false);
   const [editingWallet, setEditingWallet] = useState(null);
   const [newBalanceInput, setNewBalanceInput] = useState('');
+
+  // --- STATE SIKLUS ANGGARAN GAJIAN KE GAJIAN ---
+  const [paydayCycleStart, setPaydayCycleStart] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('booCashPaydayCycle') || 'null');
+      if (saved?.startDate) return saved.startDate;
+    } catch {
+      // ignore
+    }
+    return localDateKey(new Date());
+  });
+
+  useEffect(() => {
+    localStorage.setItem('booCashPaydayCycle', JSON.stringify({ startDate: paydayCycleStart }));
+  }, [paydayCycleStart]);
+
+  const paydayCycleEnd = useMemo(() => getNextPaydayDateKey(paydayCycleStart), [paydayCycleStart]);
+  const activeBudgetCycleKey = `cycle_${paydayCycleStart}`;
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('All');
@@ -280,7 +322,6 @@ function App() {
         return;
       }
 
-      // Sertakan jam saat ini jika tanggal yang dipilih adalah hari ini
       const now = new Date();
       const todayStr = localDateKey(now);
       const timeSuffix = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
@@ -405,16 +446,16 @@ function App() {
     if (deletion?.kind === 'transaction') await handleDeleteTransaction(deletion.payload);
     if (deletion?.kind === 'wishlist') await handleDeleteWishlist(deletion.payload);
     if (deletion?.kind === 'budget') {
-      const { month, scope, categoryKey } = deletion.payload;
+      const { cycleKey, scope, categoryKey } = deletion.payload;
       setBudgetLimits((current) => {
-        const nextMonth = { ...current[month] };
-        const nextScope = { ...nextMonth[scope] };
+        const nextCycle = { ...current[cycleKey] };
+        const nextScope = { ...nextCycle[scope] };
         delete nextScope[categoryKey];
-        if (Object.keys(nextScope).length > 0) nextMonth[scope] = nextScope;
-        else delete nextMonth[scope];
-        if (Object.keys(nextMonth).length > 0) return { ...current, [month]: nextMonth };
+        if (Object.keys(nextScope).length > 0) nextCycle[scope] = nextScope;
+        else delete nextCycle[scope];
+        if (Object.keys(nextCycle).length > 0) return { ...current, [cycleKey]: nextCycle };
         const next = { ...current };
-        delete next[month];
+        delete next[cycleKey];
         return next;
       });
       if (editingBudgetCategory === categoryKey) {
@@ -490,16 +531,38 @@ function App() {
     return { ...summary, net: summary.totalIncome - summary.totalExpense };
   }, [dashboardTransactions]);
 
-  const currentMonthTransactions = useMemo(() => sortedTransactions.filter((tx) =>
-    dateKey(tx.created_at).startsWith(monthKey()) && tx.amount < 0 && !['Transfer', 'Adjustment', 'Wishlist Savings', 'Emergency Savings'].includes(tx.category)
-  ), [sortedTransactions]);
+  // Pengeluaran dalam siklus gajian ke gajian aktif
+  const activeCycleTransactions = useMemo(() => sortedTransactions.filter((tx) => {
+    const txDate = dateKey(tx.created_at);
+    return txDate >= paydayCycleStart
+      && txDate <= paydayCycleEnd
+      && tx.amount < 0
+      && !['Transfer', 'Adjustment', 'Wishlist Savings', 'Emergency Savings'].includes(tx.category);
+  }), [sortedTransactions, paydayCycleStart, paydayCycleEnd]);
 
-  const budgetRows = Object.entries(budgetLimits[monthKey()]?.[budgetScope] || {}).map(([categoryKey, limit]) => {
-    const spent = currentMonthTransactions
+  const budgetRows = Object.entries(budgetLimits[activeBudgetCycleKey]?.[budgetScope] || {}).map(([categoryKey, limit]) => {
+    const spent = activeCycleTransactions
       .filter((tx) => tx.category === categoryKey && (tx.owner_scope || 'shared') === budgetScope)
       .reduce((total, tx) => total + Math.abs(Number(tx.amount)), 0);
     return { category: categoryKey, limit: Number(limit), spent, percent: Math.min(Math.round((spent / Number(limit)) * 100), 100) };
   }).filter((row) => row.limit > 0);
+
+  const handleStartNewPaydayCycle = () => {
+    const todayStr = localDateKey(new Date());
+    const nextStart = todayStr > paydayCycleStart ? todayStr : addDaysToDateKey(paydayCycleStart, 1);
+    setPaydayCycleStart(nextStart);
+    setEditingBudgetCategory(null);
+    setBudgetInput('');
+    setToast(`Siklus gajian baru dimulai: ${formatShortDateId(nextStart)}`);
+  };
+
+  const handlePaydayStartChange = (nextDate) => {
+    if (!nextDate) return;
+    setPaydayCycleStart(nextDate);
+    setEditingBudgetCategory(null);
+    setBudgetInput('');
+    setToast(`Tanggal mulai gajian diubah ke ${formatShortDateId(nextDate)}`);
+  };
 
   const saveBudget = (event) => {
     event.preventDefault();
@@ -508,14 +571,14 @@ function App() {
     const categoryToSave = editingBudgetCategory || budgetCategory;
     setBudgetLimits((current) => ({
       ...current,
-      [monthKey()]: {
-        ...current[monthKey()],
-        [budgetScope]: { ...current[monthKey()]?.[budgetScope], [categoryToSave]: limit }
+      [activeBudgetCycleKey]: {
+        ...current[activeBudgetCycleKey],
+        [budgetScope]: { ...current[activeBudgetCycleKey]?.[budgetScope], [categoryToSave]: limit }
       }
     }));
     setBudgetInput('');
     setEditingBudgetCategory(null);
-    setToast(editingBudgetCategory ? 'Anggaran berhasil diperbarui.' : 'Anggaran berhasil disimpan.');
+    setToast(editingBudgetCategory ? 'Anggaran siklus ini diperbarui.' : 'Anggaran siklus ini disimpan.');
   };
 
   const editBudget = (categoryKey, limit) => {
@@ -664,10 +727,31 @@ function App() {
         <DashboardChart data={chartData} colors={COLORS} theme={theme} formatAmount={formatThousand} />
       </section>
 
+      {/* ANGGARAN SIKLUS GAJIAN KE GAJIAN */}
       <section style={{ ...styles.card, backgroundColor: theme.cardBg, border: theme.border }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px', marginBottom: '12px' }}>
-          <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Anggaran Bulan Ini</h3>
-          <span style={{ color: theme.textSecondary, fontSize: '0.7rem' }}>{new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' })}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+          <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Anggaran Siklus Gajian</h3>
+          <button
+            type="button"
+            onClick={handleStartNewPaydayCycle}
+            style={{ ...styles.manageBtn, backgroundColor: theme.inputBg, color: theme.accent, padding: '6px 10px', fontSize: '0.72rem' }}
+          >
+            💰 Siklus Gajian Baru
+          </button>
+        </div>
+        <div style={{ color: theme.textSecondary, fontSize: '0.72rem', marginBottom: '10px' }}>
+          Periode: <strong>{formatShortDateId(paydayCycleStart)}</strong> s/d <strong>{formatShortDateId(paydayCycleEnd)}</strong>
+        </div>
+        <div style={{ ...styles.inputGroup, marginBottom: '10px' }}>
+          <label style={{ ...styles.label, color: theme.textSecondary }}>Tanggal mulai gajian</label>
+          <input
+            aria-label="Tanggal mulai gajian"
+            type="date"
+            value={paydayCycleStart}
+            onChange={(e) => handlePaydayStartChange(e.target.value)}
+            disabled={Boolean(editingBudgetCategory)}
+            style={{ ...styles.minimalInput, padding: '8px 10px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
+          />
         </div>
         <div style={{ ...styles.inputGroup, marginBottom: '10px' }}>
           <label style={{ ...styles.label, color: theme.textSecondary }}>Anggaran untuk</label>
@@ -694,7 +778,7 @@ function App() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
                     <span style={{ color: row.spent > row.limit ? theme.expenseColor : theme.textSecondary, whiteSpace: 'nowrap' }}>Rp {formatThousand(row.spent)} / {formatThousand(row.limit)}</span>
                     <button type="button" aria-label={`Edit anggaran ${t.cats[row.category] || row.category}`} title="Edit anggaran" onClick={() => editBudget(row.category, row.limit)} style={{ ...styles.iconBtn, padding: '1px 3px', fontSize: '0.85rem', color: theme.accent }}>✏️</button>
-                    <button type="button" aria-label={`Hapus anggaran ${t.cats[row.category] || row.category}`} title="Hapus anggaran" onClick={() => setPendingDelete({ kind: 'budget', payload: { month: monthKey(), scope: budgetScope, categoryKey: row.category } })} style={{ ...styles.iconBtn, padding: '1px 3px', fontSize: '0.85rem', color: theme.expenseColor }}>🗑️</button>
+                    <button type="button" aria-label={`Hapus anggaran ${t.cats[row.category] || row.category}`} title="Hapus anggaran" onClick={() => setPendingDelete({ kind: 'budget', payload: { cycleKey: activeBudgetCycleKey, scope: budgetScope, categoryKey: row.category } })} style={{ ...styles.iconBtn, padding: '1px 3px', fontSize: '0.85rem', color: theme.expenseColor }}>🗑️</button>
                   </div>
                 </div>
                 <div style={{ height: '7px', borderRadius: '8px', overflow: 'hidden', backgroundColor: theme.inputBg }}>
@@ -703,7 +787,7 @@ function App() {
               </div>
             ))}
           </div>
-        ) : <p style={{ color: theme.textSecondary, fontSize: '0.8rem' }}>Belum ada batas anggaran untuk {BUDGET_SCOPES.find(([value]) => value === budgetScope)?.[1].toLowerCase()}. Pilih kategori dan tentukan batas bulan ini.</p>}
+        ) : <p style={{ color: theme.textSecondary, fontSize: '0.8rem' }}>Belum ada batas anggaran untuk {BUDGET_SCOPES.find(([value]) => value === budgetScope)?.[1].toLowerCase()} di siklus gajian ini. Pilih kategori dan tentukan batasnya.</p>}
       </section>
 
       <button

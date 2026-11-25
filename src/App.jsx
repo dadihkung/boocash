@@ -29,6 +29,11 @@ const BUDGET_SCOPES = [
   ['shared', 'Bersama'], ['me', 'Bee'], ['partner', 'Boo']
 ];
 
+// Hari libur tetap nasional sekitar tanggal 25 (bulan 1-indexed)
+const FIXED_ANNUAL_HOLIDAYS = [
+  '12-25' // Hari Raya Natal
+];
+
 const dateKey = (value) => String(value || '').slice(0, 10);
 const localDateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const monthKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
@@ -40,15 +45,46 @@ const addDaysToDateKey = (isoDateStr, days) => {
   return localDateKey(base);
 };
 
-const getNextPaydayDateKey = (paydayStartStr) => {
-  const start = new Date(`${paydayStartStr}T12:00:00`);
-  if (Number.isNaN(start.getTime())) return paydayStartStr;
-  const targetDay = start.getDate();
-  const nextMonthFirst = new Date(start.getFullYear(), start.getMonth() + 1, 1, 12, 0, 0);
-  const daysInNextMonth = new Date(nextMonthFirst.getFullYear(), nextMonthFirst.getMonth() + 1, 0).getDate();
-  const clampedDay = Math.min(targetDay, daysInNextMonth);
-  const nextPayday = new Date(nextMonthFirst.getFullYear(), nextMonthFirst.getMonth(), clampedDay, 12, 0, 0);
-  return addDaysToDateKey(localDateKey(nextPayday), -1);
+const isNonWorkingDay = (dateObj, customHolidaySet) => {
+  const dayOfWeek = dateObj.getDay(); // 0 = Minggu, 6 = Sabtu
+  if (dayOfWeek === 0 || dayOfWeek === 6) return true;
+  const fullKey = localDateKey(dateObj);
+  const monthDayKey = fullKey.slice(5);
+  return FIXED_ANNUAL_HOLIDAYS.includes(monthDayKey) || customHolidaySet.has(fullKey);
+};
+
+// Hitung tanggal gajian efektif untuk bulan tertentu (tanggal 25, dipercepat jika Sabtu/Minggu/libur)
+const getEffectivePaydayForMonth = (year, monthIndex, customHolidaySet = new Set()) => {
+  const candidate = new Date(year, monthIndex, 25, 12, 0, 0);
+  while (isNonWorkingDay(candidate, customHolidaySet)) {
+    candidate.setDate(candidate.getDate() - 1);
+  }
+  return localDateKey(candidate);
+};
+
+// Tentukan siklus gajian aktif berdasarkan tanggal hari ini (atau tanggal referensi)
+const resolvePaydayCycle = (referenceDate = new Date(), customHolidaySet = new Set()) => {
+  const refKey = localDateKey(referenceDate);
+  const year = referenceDate.getFullYear();
+  const month = referenceDate.getMonth();
+
+  const currentMonthPayday = getEffectivePaydayForMonth(year, month, customHolidaySet);
+
+  if (refKey >= currentMonthPayday) {
+    const nextMonthDate = new Date(year, month + 1, 1, 12, 0, 0);
+    const nextMonthPayday = getEffectivePaydayForMonth(nextMonthDate.getFullYear(), nextMonthDate.getMonth(), customHolidaySet);
+    return {
+      startDate: currentMonthPayday,
+      endDate: addDaysToDateKey(nextMonthPayday, -1)
+    };
+  }
+
+  const prevMonthDate = new Date(year, month - 1, 1, 12, 0, 0);
+  const prevMonthPayday = getEffectivePaydayForMonth(prevMonthDate.getFullYear(), prevMonthDate.getMonth(), customHolidaySet);
+  return {
+    startDate: prevMonthPayday,
+    endDate: addDaysToDateKey(currentMonthPayday, -1)
+  };
 };
 
 const formatShortDateId = (isoDateStr) => {
@@ -118,22 +154,31 @@ function App() {
   const [editingWallet, setEditingWallet] = useState(null);
   const [newBalanceInput, setNewBalanceInput] = useState('');
 
-  // --- STATE SIKLUS ANGGARAN GAJIAN KE GAJIAN ---
-  const [paydayCycleStart, setPaydayCycleStart] = useState(() => {
+  // --- STATE SIKLUS GAJIAN OTOMATIS (TGL 25 DIPERCEPAT SAAT WEEKEND / LIBUR) ---
+  const [customHolidays, setCustomHolidays] = useState(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem('booCashPaydayCycle') || 'null');
-      if (saved?.startDate) return saved.startDate;
+      const saved = JSON.parse(localStorage.getItem('booCashCustomHolidays') || '[]');
+      return Array.isArray(saved) ? saved : [];
     } catch {
-      // ignore
+      return [];
     }
-    return localDateKey(new Date());
   });
+  const [holidayDateInput, setHolidayDateInput] = useState('');
+  const [showHolidayManager, setShowHolidayManager] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem('booCashPaydayCycle', JSON.stringify({ startDate: paydayCycleStart }));
-  }, [paydayCycleStart]);
+    localStorage.setItem('booCashCustomHolidays', JSON.stringify(customHolidays));
+  }, [customHolidays]);
 
-  const paydayCycleEnd = useMemo(() => getNextPaydayDateKey(paydayCycleStart), [paydayCycleStart]);
+  const customHolidaySet = useMemo(() => new Set(customHolidays), [customHolidays]);
+
+  const activePaydayCycle = useMemo(
+    () => resolvePaydayCycle(new Date(), customHolidaySet),
+    [customHolidaySet]
+  );
+
+  const paydayCycleStart = activePaydayCycle.startDate;
+  const paydayCycleEnd = activePaydayCycle.endDate;
   const activeBudgetCycleKey = `cycle_${paydayCycleStart}`;
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -531,7 +576,7 @@ function App() {
     return { ...summary, net: summary.totalIncome - summary.totalExpense };
   }, [dashboardTransactions]);
 
-  // Pengeluaran dalam siklus gajian ke gajian aktif
+  // Pengeluaran dalam siklus gajian aktif (tgl 25 dipercepat jika Sabtu/Minggu/libur)
   const activeCycleTransactions = useMemo(() => sortedTransactions.filter((tx) => {
     const txDate = dateKey(tx.created_at);
     return txDate >= paydayCycleStart
@@ -547,21 +592,21 @@ function App() {
     return { category: categoryKey, limit: Number(limit), spent, percent: Math.min(Math.round((spent / Number(limit)) * 100), 100) };
   }).filter((row) => row.limit > 0);
 
-  const handleStartNewPaydayCycle = () => {
-    const todayStr = localDateKey(new Date());
-    const nextStart = todayStr > paydayCycleStart ? todayStr : addDaysToDateKey(paydayCycleStart, 1);
-    setPaydayCycleStart(nextStart);
-    setEditingBudgetCategory(null);
-    setBudgetInput('');
-    setToast(`Siklus gajian baru dimulai: ${formatShortDateId(nextStart)}`);
+  const handleAddHoliday = (e) => {
+    e.preventDefault();
+    if (!holidayDateInput) return;
+    if (customHolidays.includes(holidayDateInput)) {
+      setToast('Tanggal libur tersebut sudah ada.');
+      return;
+    }
+    setCustomHolidays((prev) => [...prev, holidayDateInput].sort());
+    setHolidayDateInput('');
+    setToast('Tanggal libur ditambahkan.');
   };
 
-  const handlePaydayStartChange = (nextDate) => {
-    if (!nextDate) return;
-    setPaydayCycleStart(nextDate);
-    setEditingBudgetCategory(null);
-    setBudgetInput('');
-    setToast(`Tanggal mulai gajian diubah ke ${formatShortDateId(nextDate)}`);
+  const handleRemoveHoliday = (targetDate) => {
+    setCustomHolidays((prev) => prev.filter((item) => item !== targetDate));
+    setToast('Tanggal libur dihapus.');
   };
 
   const saveBudget = (event) => {
@@ -727,32 +772,60 @@ function App() {
         <DashboardChart data={chartData} colors={COLORS} theme={theme} formatAmount={formatThousand} />
       </section>
 
-      {/* ANGGARAN SIKLUS GAJIAN KE GAJIAN */}
+      {/* ANGGARAN SIKLUS GAJIAN (TGL 25 DIPERCEPAT SAAT WEEKEND / LIBUR) */}
       <section style={{ ...styles.card, backgroundColor: theme.cardBg, border: theme.border }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
           <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Anggaran Siklus Gajian</h3>
           <button
             type="button"
-            onClick={handleStartNewPaydayCycle}
-            style={{ ...styles.manageBtn, backgroundColor: theme.inputBg, color: theme.accent, padding: '6px 10px', fontSize: '0.72rem' }}
+            onClick={() => setShowHolidayManager((prev) => !prev)}
+            style={{ ...styles.manageBtn, backgroundColor: theme.inputBg, color: theme.textSecondary, padding: '6px 10px', fontSize: '0.72rem' }}
           >
-            💰 Siklus Gajian Baru
+            📅 Libur ({customHolidays.length})
           </button>
         </div>
-        <div style={{ color: theme.textSecondary, fontSize: '0.72rem', marginBottom: '10px' }}>
-          Periode: <strong>{formatShortDateId(paydayCycleStart)}</strong> s/d <strong>{formatShortDateId(paydayCycleEnd)}</strong>
+        <div style={{ color: theme.textSecondary, fontSize: '0.72rem', marginBottom: '10px', lineHeight: 1.4 }}>
+          Periode aktif: <strong>{formatShortDateId(paydayCycleStart)}</strong> s/d <strong>{formatShortDateId(paydayCycleEnd)}</strong>
+          <br />
+          <span style={{ opacity: 0.85 }}>Otomatis tgl 25 (dipercepat ke hari kerja jika Sabtu/Minggu/libur).</span>
         </div>
-        <div style={{ ...styles.inputGroup, marginBottom: '10px' }}>
-          <label style={{ ...styles.label, color: theme.textSecondary }}>Tanggal mulai gajian</label>
-          <input
-            aria-label="Tanggal mulai gajian"
-            type="date"
-            value={paydayCycleStart}
-            onChange={(e) => handlePaydayStartChange(e.target.value)}
-            disabled={Boolean(editingBudgetCategory)}
-            style={{ ...styles.minimalInput, padding: '8px 10px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
-          />
-        </div>
+
+        {showHolidayManager && (
+          <div style={{ padding: '10px', borderRadius: '14px', backgroundColor: theme.inputBg, marginBottom: '12px' }}>
+            <div style={{ fontSize: '0.72rem', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>
+              Tambah Tanggal Merah / Libur Kerja
+            </div>
+            <form onSubmit={handleAddHoliday} style={{ display: 'flex', gap: '6px', marginBottom: customHolidays.length > 0 ? '8px' : 0 }}>
+              <input
+                aria-label="Tanggal libur nasional"
+                type="date"
+                value={holidayDateInput}
+                onChange={(e) => setHolidayDateInput(e.target.value)}
+                style={{ ...styles.minimalInput, flex: 1, padding: '7px 9px', fontSize: '0.75rem', backgroundColor: theme.cardBg, color: theme.textMain, borderColor: theme.border }}
+              />
+              <button type="submit" style={{ ...styles.manageBtn, backgroundColor: theme.accent, color: theme.buttonText, padding: '7px 10px', fontSize: '0.75rem' }}>
+                Tambah
+              </button>
+            </form>
+            {customHolidays.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {customHolidays.map((dateItem) => (
+                  <span key={dateItem} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.7rem', padding: '3px 8px', borderRadius: '8px', backgroundColor: theme.cardBg, color: theme.textMain }}>
+                    {formatShortDateId(dateItem)}
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveHoliday(dateItem)}
+                      style={{ background: 'none', border: 'none', color: theme.expenseColor, cursor: 'pointer', padding: 0, fontSize: '0.75rem' }}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ ...styles.inputGroup, marginBottom: '10px' }}>
           <label style={{ ...styles.label, color: theme.textSecondary }}>Anggaran untuk</label>
           <select aria-label="Scope anggaran" value={budgetScope} onChange={(e) => setBudgetScope(e.target.value)} disabled={Boolean(editingBudgetCategory)} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}>

@@ -64,8 +64,9 @@ function App() {
   const [showTransactionModal, setShowTransactionModal] = useState(false);
   const [toast, setToast] = useState('');
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [deletingTxId, setDeletingTxId] = useState(null);
 
-  // --- STATE UNTUK EDIT SALDO (NEW) ---
+  // --- STATE UNTUK EDIT SALDO ---
   const [showBalanceModal, setShowBalanceModal] = useState(false);
   const [editingWallet, setEditingWallet] = useState(null);
   const [newBalanceInput, setNewBalanceInput] = useState('');
@@ -88,16 +89,16 @@ function App() {
     }
   });
 
-  const [selectedWallet, setSelectedWallet] = useState(''); 
-  const [targetWallet, setTargetWallet] = useState(''); 
+  const [selectedWallet, setSelectedWallet] = useState('');
+  const [targetWallet, setTargetWallet] = useState('');
   const [savingsWalletId, setSavingsWalletId] = useState('');
-  const [selectedGoal, setSelectedGoal] = useState(''); 
-  const [amount, setAmount] = useState(''); 
-  const [type, setType] = useState('expense'); 
+  const [selectedGoal, setSelectedGoal] = useState('');
+  const [amount, setAmount] = useState('');
+  const [type, setType] = useState('expense');
   const [category, setCategory] = useState('Food');
   const [transactionOwnerScope, setTransactionOwnerScope] = useState('shared');
   const [description, setDescription] = useState('');
-  const [transactionDate, setTransactionDate] = useState(new Date().toISOString().split('T')[0]); 
+  const [transactionDate, setTransactionDate] = useState(new Date().toISOString().split('T')[0]);
   const [submitting, setSubmitting] = useState(false);
 
   const [showWishlistCrud, setShowWishlistCrud] = useState(false);
@@ -111,7 +112,7 @@ function App() {
 
   const formatThousand = (val) => {
     if (val === '' || val === null || val === undefined) return '';
-    const clean = val.toString().replace(/\D/g, ''); 
+    const clean = val.toString().replace(/\D/g, '');
     if (!clean) return '';
     return Number(clean).toLocaleString('id-ID');
   };
@@ -169,7 +170,6 @@ function App() {
         if (!txPage || txPage.length < 1000) break;
       }
       setTransactions(allTransactions);
-
     } catch (error) {
       console.error('Error fetching data:', error.message);
     } finally {
@@ -200,8 +200,8 @@ function App() {
     const numericAmount = parseRawNumber(amount);
     if (numericAmount <= 0) { setToast('Masukkan jumlah uang yang valid.'); return; }
     setSubmitting(true);
-    const sourceWalletId = parseInt(selectedWallet);
-    const targetWalletId = parseInt(targetWallet);
+    const sourceWalletId = parseInt(selectedWallet, 10);
+    const targetWalletId = parseInt(targetWallet, 10);
 
     try {
       if (type === TRANSACTION_TYPES.TRANSFER && sourceWalletId === targetWalletId) {
@@ -244,26 +244,31 @@ function App() {
       });
       if (error) throw error;
 
-      setAmount(''); setDescription(''); setShowTransactionModal(false); 
-      await fetchData(); 
+      setAmount(''); setDescription(''); setShowTransactionModal(false);
+      await fetchData();
       setToast('Catatan berhasil ditambahkan.');
     } catch (error) { setToast('Gagal menyimpan: ' + error.message); } finally { setSubmitting(false); }
   };
 
   // --- DELETE TRANSACTION ---
   const handleDeleteTransaction = async (tx) => {
+    setDeletingTxId(tx.id);
     try {
       const { error } = await supabase.rpc('delete_financial_transaction', { p_transaction_id: tx.id });
       if (error) throw error;
 
+      // Hapus langsung dari state agar Riwayat Terakhir & Semua Riwayat langsung terupdate
+      setTransactions((prev) => prev.filter((item) => item.id !== tx.id));
       await fetchData();
       setToast('Transaksi berhasil dihapus.');
     } catch (error) {
       setToast('Gagal menghapus: ' + (error.message || JSON.stringify(error)));
+    } finally {
+      setDeletingTxId(null);
     }
   };
 
-  // --- EDIT BALANCE HANDLER (NEW) ---
+  // --- EDIT BALANCE HANDLER ---
   const handleEditBalanceSubmit = async (e) => {
     e.preventDefault();
     if (!editingWallet) return;
@@ -318,6 +323,7 @@ function App() {
     try {
       const { error } = await supabase.from('savings_goals').delete().eq('id', id);
       if (error) throw error;
+      setGoals((prev) => prev.filter((item) => item.id !== id));
       await fetchData();
       setToast('Target berhasil dihapus.');
     } catch (error) { setToast('Gagal menghapus: ' + error.message); }
@@ -400,6 +406,7 @@ function App() {
   const currentMonthTransactions = useMemo(() => transactions.filter((tx) =>
     dateKey(tx.created_at).startsWith(monthKey()) && tx.amount < 0 && !['Transfer', 'Adjustment', 'Wishlist Savings', 'Emergency Savings'].includes(tx.category)
   ), [transactions]);
+
   const budgetRows = Object.entries(budgetLimits[monthKey()]?.[budgetScope] || {}).map(([categoryKey, limit]) => {
     const spent = currentMonthTransactions
       .filter((tx) => tx.category === categoryKey && (tx.owner_scope || 'shared') === budgetScope)
@@ -434,16 +441,17 @@ function App() {
     setEditingBudgetCategory(null);
     setBudgetInput('');
   };
+
   const COLORS = ['#eab308', '#e11d48', '#16a34a', '#3b82f6', '#a855f7', '#fb923c', '#2dd4bf'];
   const theme = isDarkMode ? darkYellowTheme : lightYellowTheme;
 
   const filteredTransactions = useMemo(() => {
     const historySource = syncHistoryWithDashboard ? dashboardTransactions : transactions;
-    return historySource.filter(tx => {
-    const matchesSearch = tx.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          (t.cats[tx.category] || tx.category).toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = filterCategory === 'All' || tx.category === filterCategory;
-    return matchesSearch && matchesCategory;
+    return historySource.filter((tx) => {
+      const matchesSearch = tx.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (t.cats[tx.category] || tx.category).toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesCategory = filterCategory === 'All' || tx.category === filterCategory;
+      return matchesSearch && matchesCategory;
     });
   }, [transactions, dashboardTransactions, syncHistoryWithDashboard, searchTerm, filterCategory, t.cats]);
 
@@ -469,7 +477,7 @@ function App() {
         onEdit={(wallet) => { setEditingWallet(wallet); setNewBalanceInput(formatThousand(wallet.balance)); setShowBalanceModal(true); }}
       />
 
-      {/* MODAL EDIT SALDO (NEW) */}
+      {/* MODAL EDIT SALDO */}
       {showBalanceModal && (
         <div style={styles.modalOverlay}>
           <div style={{ ...styles.modalContent, backgroundColor: theme.bg, borderColor: theme.border }}>
@@ -487,12 +495,12 @@ function App() {
                 </label>
                 <div style={styles.amountInputWrapper}>
                   <span style={{ ...styles.currencyPrefix, color: theme.textMain }}>Rp</span>
-                  <input 
-                    type="text" inputMode="numeric" 
-                    value={newBalanceInput} 
-                    onChange={(e) => setNewBalanceInput(formatThousand(e.target.value))} 
-                    style={{ ...styles.amountInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }} 
-                    required 
+                  <input
+                    type="text" inputMode="numeric"
+                    value={newBalanceInput}
+                    onChange={(e) => setNewBalanceInput(formatThousand(e.target.value))}
+                    style={{ ...styles.amountInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}
+                    required
                   />
                 </div>
               </div>
@@ -509,13 +517,13 @@ function App() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
           <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Ringkasan Keuangan</h3>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <select 
-              value={dashboardWalletId} 
+            <select
+              value={dashboardWalletId}
               onChange={(e) => setDashboardWalletId(e.target.value)}
               style={{ ...styles.minimalInput, flex: 1, padding: '6px 10px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
             >
               <option value="All">Semua Rekening</option>
-              {wallets.map(w => (
+              {wallets.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.display_name || w.name}
                 </option>
@@ -548,8 +556,8 @@ function App() {
           </div>
         </div>
         <div style={{ padding: '10px', borderRadius: '12px', backgroundColor: theme.inputBg, textAlign: 'center', marginBottom: '20px' }}>
-            <div style={{ fontSize: '0.75rem', color: theme.textSecondary, fontWeight: '700' }}>SELISIH PERIODE</div>
-            <div style={{ color: theme.textMain, fontWeight: '700', fontSize: '1.2rem' }}>Rp {formatThousand(monthlySummary.net)}</div>
+          <div style={{ fontSize: '0.75rem', color: theme.textSecondary, fontWeight: '700' }}>SELISIH PERIODE</div>
+          <div style={{ color: theme.textMain, fontWeight: '700', fontSize: '1.2rem' }}>Rp {formatThousand(monthlySummary.net)}</div>
         </div>
 
         <DashboardChart data={chartData} colors={COLORS} theme={theme} formatAmount={formatThousand} />
@@ -597,7 +605,7 @@ function App() {
         ) : <p style={{ color: theme.textSecondary, fontSize: '0.8rem' }}>Belum ada batas anggaran untuk {BUDGET_SCOPES.find(([value]) => value === budgetScope)?.[1].toLowerCase()}. Pilih kategori dan tentukan batas bulan ini.</p>}
       </section>
 
-      <button 
+      <button
         onClick={() => setShowTransactionModal(true)}
         style={{ ...styles.submitBtn, backgroundColor: theme.accent, color: theme.buttonText, marginBottom: '24px', boxShadow: `0 4px 14px ${theme.accent}40` }}
       >
@@ -663,11 +671,21 @@ function App() {
                   {tx.description && <span style={{ ...styles.txDesc, color: theme.textSecondary }}>{tx.description}</span>}
                   <span style={{ fontSize: '0.7rem', color: theme.textSecondary, marginTop: '2px' }}>{formatDateStr(tx.created_at)}</span>
                 </div>
-                <span style={{ ...styles.txAmount, color: isExpense ? theme.expenseColor : theme.incomeColor }}>
-                  {isEmergencyAllocation
-                    ? `Alokasi Rp ${Number(tx.goal_contribution).toLocaleString('id-ID')}`
-                    : `${isExpense ? '- ' : '+ '}Rp ${Number(Math.abs(tx.amount)).toLocaleString('id-ID')}`}
-                </span>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                  <span style={{ ...styles.txAmount, color: isExpense ? theme.expenseColor : theme.incomeColor }}>
+                    {isEmergencyAllocation
+                      ? `Alokasi Rp ${Number(tx.goal_contribution).toLocaleString('id-ID')}`
+                      : `${isExpense ? '- ' : '+ '}Rp ${Number(Math.abs(tx.amount)).toLocaleString('id-ID')}`}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={deletingTxId === tx.id}
+                    onClick={() => setPendingDelete({ kind: 'transaction', payload: tx })}
+                    style={{ background: 'none', border: 'none', color: theme.expenseColor, fontSize: '0.75rem', cursor: 'pointer', padding: 0 }}
+                  >
+                    {deletingTxId === tx.id ? 'Menghapus...' : '🗑️ Hapus'}
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -696,13 +714,13 @@ function App() {
                   <div style={styles.inputGroup}>
                     <label style={{ ...styles.label, color: theme.textSecondary }}>Dari Rekening</label>
                     <select value={selectedWallet} onChange={(e) => setSelectedWallet(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}>
-                      {wallets.map(w => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
+                      {wallets.map((w) => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
                     </select>
                   </div>
                   <div style={styles.inputGroup}>
                     <label style={{ ...styles.label, color: theme.accent }}>Ke Rekening</label>
                     <select value={targetWallet} onChange={(e) => setTargetWallet(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.accent, color: theme.textMain }}>
-                      {wallets.map(w => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
+                      {wallets.map((w) => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
                     </select>
                   </div>
                 </>
@@ -717,7 +735,7 @@ function App() {
                         setSavingsWalletId(wallets.find((wallet) => wallet.id !== Number(nextWalletId))?.id.toString() || '');
                       }
                     }} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }}>
-                      {wallets.map(w => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
+                      {wallets.map((w) => <option key={w.id} value={w.id}>{w.display_name || w.name}</option>)}
                     </select>
                   </div>
                   <div style={styles.inputGroup}>
@@ -786,7 +804,7 @@ function App() {
                 <input type="date" value={transactionDate} onChange={(e) => setTransactionDate(e.target.value)} style={{ ...styles.minimalInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }} />
               </div>
               <div style={styles.inputGroup}>
-                  <label style={{ ...styles.label, color: theme.textSecondary }}>{category === 'Emergency Savings' ? 'Jumlah alokasi dana darurat' : 'Jumlah Uang'}</label>
+                <label style={{ ...styles.label, color: theme.textSecondary }}>{category === 'Emergency Savings' ? 'Jumlah alokasi dana darurat' : 'Jumlah Uang'}</label>
                 <div style={styles.amountInputWrapper}>
                   <span style={{ ...styles.currencyPrefix, color: theme.textMain }}>Rp</span>
                   <input type="text" inputMode="numeric" placeholder="0" value={amount} onChange={(e) => setAmount(formatThousand(e.target.value))} style={{ ...styles.amountInput, backgroundColor: theme.inputBg, borderColor: theme.border, color: theme.textMain }} required />
@@ -814,16 +832,16 @@ function App() {
             </div>
 
             <div style={{ display: 'flex', gap: '8px', marginBottom: '15px' }}>
-              <input 
+              <input
                 type="text" placeholder="Cari..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
                 style={{ ...styles.minimalInput, flex: 2, backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
               />
-              <select 
+              <select
                 value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}
                 style={{ ...styles.minimalInput, flex: 1, backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
               >
                 <option value="All">Semua</option>
-                {Object.keys(t.cats).map(cat => <option key={cat} value={cat}>{t.cats[cat]}</option>)}
+                {Object.keys(t.cats).map((cat) => <option key={cat} value={cat}>{t.cats[cat]}</option>)}
               </select>
             </div>
 
@@ -859,8 +877,13 @@ function App() {
                           ? `Alokasi Rp ${Number(tx.goal_contribution).toLocaleString('id-ID')}`
                           : `${isExpense ? '- ' : '+ '}Rp ${Number(Math.abs(tx.amount)).toLocaleString('id-ID')}`}
                       </span>
-                      <button onClick={() => setPendingDelete({ kind: 'transaction', payload: tx })} style={{ background: 'none', border: 'none', color: theme.expenseColor, fontSize: '0.75rem', cursor: 'pointer', padding: 0 }}>
-                        🗑️ Hapus
+                      <button
+                        type="button"
+                        disabled={deletingTxId === tx.id}
+                        onClick={() => setPendingDelete({ kind: 'transaction', payload: tx })}
+                        style={{ background: 'none', border: 'none', color: theme.expenseColor, fontSize: '0.75rem', cursor: 'pointer', padding: 0 }}
+                      >
+                        {deletingTxId === tx.id ? 'Menghapus...' : '🗑️ Hapus'}
                       </button>
                     </div>
                   </div>
@@ -917,6 +940,7 @@ function App() {
           </div>
         </div>
       )}
+
       {pendingDelete && (
         <div style={{ ...styles.modalOverlay, zIndex: 1100 }}>
           <div role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title" style={{ ...styles.modalContent, maxWidth: '360px', borderRadius: '20px', padding: '22px', backgroundColor: theme.bg, border: theme.border }}>
@@ -939,33 +963,33 @@ function App() {
   );
 }
 
-const lightYellowTheme = { 
-  bg: '#fefdf0', 
-  cardBg: '#ffffff', 
-  inputBg: '#fbf9e3', 
-  activeSegmentBg: '#ffffff', 
+const lightYellowTheme = {
+  bg: '#fefdf0',
+  cardBg: '#ffffff',
+  inputBg: '#fbf9e3',
+  activeSegmentBg: '#ffffff',
   border: '1px solid #e5e5d5',
-  textMain: '#2c2a1e', 
-  textSecondary: '#8c876e', 
-  expenseColor: '#e11d48', 
-  incomeColor: '#16a34a', 
-  buttonBg: '#eab308', 
-  buttonText: '#ffffff', 
-  accent: '#eab308' 
+  textMain: '#2c2a1e',
+  textSecondary: '#8c876e',
+  expenseColor: '#e11d48',
+  incomeColor: '#16a34a',
+  buttonBg: '#eab308',
+  buttonText: '#ffffff',
+  accent: '#eab308'
 };
-const darkYellowTheme = { 
-  bg: '#14140f', 
-  cardBg: '#1e1e17', 
-  inputBg: '#2a291f', 
-  activeSegmentBg: '#343327', 
-  border: '1px solid rgba(234, 179, 8, 0.08)', 
-  textMain: '#fefce8', 
-  textSecondary: '#a19e85', 
-  expenseColor: '#ff453a', 
-  incomeColor: '#30d158', 
-  buttonBg: '#facc15', 
-  buttonText: '#1c1c16', 
-  accent: '#facc15' 
+const darkYellowTheme = {
+  bg: '#14140f',
+  cardBg: '#1e1e17',
+  inputBg: '#2a291f',
+  activeSegmentBg: '#343327',
+  border: '1px solid rgba(234, 179, 8, 0.08)',
+  textMain: '#fefce8',
+  textSecondary: '#a19e85',
+  expenseColor: '#ff453a',
+  incomeColor: '#30d158',
+  buttonBg: '#facc15',
+  buttonText: '#1c1c16',
+  accent: '#facc15'
 };
 
 const styles = {

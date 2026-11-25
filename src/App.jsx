@@ -117,15 +117,36 @@ const normalizeBudgetLimits = (storedBudgets) => Object.fromEntries(
   })
 );
 
-const getWalletFullLabel = (wallet) => `${wallet?.display_name || ''} ${wallet?.name || ''}`.trim();
-const isJointWalletRecord = (wallet) => /rek\s*gabungan|gabungan/i.test(getWalletFullLabel(wallet));
-const isDanaBeeWallet = (wallet) => /dana\s*bee/i.test(getWalletFullLabel(wallet));
-const isBooMandiriWallet = (wallet) => /boo\s*mandiri/i.test(getWalletFullLabel(wallet));
-const isBeeBluWallet = (wallet) => /^bee\s*blu\s*bca$/i.test(getWalletFullLabel(wallet)) || /bee\s*blu\s*bca/i.test(getWalletFullLabel(wallet));
-const isBooBluWallet = (wallet) => /^boo\s*blu(?:e)?\s*bca$/i.test(getWalletFullLabel(wallet)) || /boo\s*blu(?:e)?\s*bca/i.test(getWalletFullLabel(wallet));
+const normalizeText = (value) => String(value || '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim();
 
-const isAyoNikahGoal = (goal) => /ayo\s*nikah/i.test(goal?.item_name || '');
-const isRenovasiRumahGoal = (goal) => /renovasi\s*rumah/i.test(goal?.item_name || '');
+const parseBalanceNumber = (value) => {
+  if (value === null || value === undefined || value === '') return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const cleaned = String(value).replace(/[^\d.-]/g, '');
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const getWalletFullLabel = (wallet) => `${wallet?.display_name || ''} ${wallet?.name || ''}`.trim();
+const isJointWalletRecord = (wallet) => /\b(rek\s*)?gabungan\b/i.test(normalizeText(getWalletFullLabel(wallet)));
+const isDanaBeeWallet = (wallet) => /\bdana\s*bee\b/i.test(normalizeText(getWalletFullLabel(wallet)));
+const isBooMandiriWallet = (wallet) => /\bboo\s*mandiri\b/i.test(normalizeText(getWalletFullLabel(wallet)));
+
+const isBeeBluWallet = (wallet) => {
+  const norm = normalizeText(getWalletFullLabel(wallet));
+  return /\bbee\b/.test(norm) && (/\bblu(e)?\b/.test(norm) || /\bbca\b/.test(norm));
+};
+
+const isBooBluWallet = (wallet) => {
+  const norm = normalizeText(getWalletFullLabel(wallet));
+  return /\bboo\b/.test(norm) && (/\bblu(e)?\b/.test(norm) || /\bbca\b/.test(norm));
+};
+
+const isAyoNikahGoal = (goal) => /\bayo\s*nikah\b/i.test(normalizeText(goal?.item_name));
+const isRenovasiRumahGoal = (goal) => /\brenovasi\s*rumah\b/i.test(normalizeText(goal?.item_name));
 
 function App() {
   const [showGreeting, setShowGreeting] = useState(true);
@@ -251,13 +272,13 @@ function App() {
 
   // Nominal terkumpul otomatis ngikut saldo rekening masing-masing setelah setiap perubahan transaksi/saldo
   const getEffectiveGoalSaved = (goal) => {
-    if (isAyoNikahGoal(goal) && beeBluWallet) {
-      return Math.max(0, Number(beeBluWallet.balance || 0));
+    if (isAyoNikahGoal(goal)) {
+      return beeBluWallet ? Math.max(0, parseBalanceNumber(beeBluWallet.balance)) : 0;
     }
-    if (isRenovasiRumahGoal(goal) && booBluWallet) {
-      return Math.max(0, Number(booBluWallet.balance || 0));
+    if (isRenovasiRumahGoal(goal)) {
+      return booBluWallet ? Math.max(0, parseBalanceNumber(booBluWallet.balance)) : 0;
     }
-    return Math.max(0, Number(goal?.current_saved || 0));
+    return Math.max(0, parseBalanceNumber(goal?.current_saved));
   };
 
   const displayWallets = useMemo(() => {
@@ -266,7 +287,7 @@ function App() {
 
     if (!danaBee && !booMandiri) return physicalWallets;
 
-    const combinedBalance = Number(danaBee?.balance || 0) + Number(booMandiri?.balance || 0);
+    const combinedBalance = parseBalanceNumber(danaBee?.balance) + parseBalanceNumber(booMandiri?.balance);
     const virtualJointWallet = {
       id: 'virtual_rek_gabungan',
       name: 'rek_gabungan',
@@ -281,14 +302,20 @@ function App() {
 
   const formatThousand = (val) => {
     if (val === '' || val === null || val === undefined) return '';
-    const clean = val.toString().replace(/\D/g, '');
+    if (typeof val === 'number') {
+      return Math.round(val).toLocaleString('id-ID');
+    }
+    const str = String(val).trim();
+    // Jika format desimal dari DB seperti "9500210.00", ambil bagian integer sebelum titik
+    const integerPart = /^\d+\.\d+$/.test(str) ? str.split('.')[0] : str;
+    const clean = integerPart.replace(/\D/g, '');
     if (!clean) return '';
     return Number(clean).toLocaleString('id-ID');
   };
 
   const parseRawNumber = (val) => {
     if (!val) return 0;
-    return Number(val.toString().replace(/\D/g, '')) || 0;
+    return Number(String(val).replace(/\D/g, '')) || 0;
   };
 
   const formatDateStr = (isoString) => {
@@ -313,26 +340,33 @@ function App() {
     try {
       const { data: walletData, error: wError } = await supabase.from('wallets').select('*').order('id', { ascending: true });
       if (wError) throw wError;
-      setWallets(walletData);
+      const safeWallets = walletData || [];
+      setWallets(safeWallets);
 
-      const usableWallets = walletData.filter((wallet) => !isJointWalletRecord(wallet));
+      const usableWallets = safeWallets.filter((wallet) => !isJointWalletRecord(wallet));
       if (usableWallets.length > 0) {
-        if (!selectedWallet) setSelectedWallet(usableWallets[0].id.toString());
-        if (!targetWallet && usableWallets[1]) setTargetWallet(usableWallets[1].id.toString());
-        if (!savingsWalletId) {
-          const sourceId = Number(selectedWallet || usableWallets[0].id);
+        const defaultSourceId = usableWallets[0].id;
+        setSelectedWallet((prev) => prev || String(defaultSourceId));
+        setTargetWallet((prev) => {
+          if (prev) return prev;
+          const fallbackTarget = usableWallets.find((w) => w.id !== defaultSourceId) || usableWallets[0];
+          return String(fallbackTarget.id);
+        });
+        setSavingsWalletId((prev) => {
+          if (prev) return prev;
           const savingsWallet = usableWallets.find((wallet) =>
-            wallet.id !== sourceId && /blu|blue\s*bca/i.test(getWalletFullLabel(wallet))
-          ) || usableWallets.find((wallet) => wallet.id !== sourceId);
-          if (savingsWallet) setSavingsWalletId(savingsWallet.id.toString());
-        }
+            wallet.id !== defaultSourceId && /\bblu(e)?\b|\bbca\b/i.test(normalizeText(getWalletFullLabel(wallet)))
+          ) || usableWallets.find((wallet) => wallet.id !== defaultSourceId);
+          return savingsWallet ? String(savingsWallet.id) : '';
+        });
       }
 
       const { data: goalData, error: gError } = await supabase.from('savings_goals').select('*').order('id', { ascending: true });
       if (gError) throw gError;
-      setGoals(goalData);
-      if (goalData.length > 0 && !selectedGoal) {
-        setSelectedGoal(goalData[0].id.toString());
+      const safeGoals = goalData || [];
+      setGoals(safeGoals);
+      if (safeGoals.length > 0) {
+        setSelectedGoal((prev) => prev || String(safeGoals[0].id));
       }
 
       const allTransactions = [];
@@ -463,7 +497,7 @@ function App() {
     if (!editingWallet || editingWallet.isVirtual) return;
 
     const numericNewBalance = parseRawNumber(newBalanceInput);
-    const currentBalance = parseFloat(editingWallet.balance);
+    const currentBalance = parseBalanceNumber(editingWallet.balance);
     const difference = numericNewBalance - currentBalance;
 
     if (difference === 0) {
@@ -508,7 +542,7 @@ function App() {
 
   const resetCrudForm = () => { setGoalIdToEdit(null); setWishlistItemName(''); setWishlistTargetAmount(''); setWishlistCurrentSaved(''); };
   const handleEditClick = (goal) => {
-    setGoalIdToEdit(goal.id); setWishlistItemName(goal.item_name); setWishlistTargetAmount(goal.target_amount.toString()); setWishlistCurrentSaved(getEffectiveGoalSaved(goal).toString()); setShowWishlistCrud(true);
+    setGoalIdToEdit(goal.id); setWishlistItemName(goal.item_name); setWishlistTargetAmount(String(parseBalanceNumber(goal.target_amount))); setWishlistCurrentSaved(String(getEffectiveGoalSaved(goal))); setShowWishlistCrud(true);
   };
   const handleDeleteWishlist = async (id) => {
     try {
@@ -916,7 +950,8 @@ function App() {
         <div style={styles.goalsGrid}>
           {goals.map((goal) => {
             const effectiveSaved = getEffectiveGoalSaved(goal);
-            const pct = Math.min(Math.round((effectiveSaved / goal.target_amount) * 100), 100) || 0;
+            const targetVal = Math.max(0, parseBalanceNumber(goal.target_amount));
+            const pct = targetVal > 0 ? Math.min(Math.round((effectiveSaved / targetVal) * 100), 100) : 0;
             const linkedWalletLabel = isAyoNikahGoal(goal) && beeBluWallet
               ? (beeBluWallet.display_name || beeBluWallet.name)
               : isRenovasiRumahGoal(goal) && booBluWallet
@@ -941,7 +976,7 @@ function App() {
                 </div>
                 <div style={styles.goalAmountRow}>
                   <span style={{ color: theme.textSecondary }}>Rp {Number(effectiveSaved).toLocaleString('id-ID')}</span>
-                  <span style={{ color: theme.textSecondary, opacity: 0.6 }}>target: Rp {Number(goal.target_amount).toLocaleString('id-ID')}</span>
+                  <span style={{ color: theme.textSecondary, opacity: 0.6 }}>target: Rp {Number(targetVal).toLocaleString('id-ID')}</span>
                 </div>
               </div>
             );
@@ -1290,7 +1325,7 @@ function App() {
                   <div style={styles.crudInfo}>
                     <span style={{ ...styles.crudName, color: theme.textMain }}>{g.item_name}</span>
                     <span style={{ fontSize: '0.75rem', color: theme.textSecondary }}>
-                      Terkumpul: Rp {Number(getEffectiveGoalSaved(g)).toLocaleString('id-ID')} / Target: Rp {Number(g.target_amount).toLocaleString('id-ID')}
+                      Terkumpul: Rp {Number(getEffectiveGoalSaved(g)).toLocaleString('id-ID')} / Target: Rp {Number(parseBalanceNumber(g.target_amount)).toLocaleString('id-ID')}
                     </span>
                   </div>
                   <div style={styles.crudButtons}>

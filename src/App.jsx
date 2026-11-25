@@ -28,9 +28,27 @@ const PERIOD_OPTIONS = [
 const BUDGET_SCOPES = [
   ['shared', 'Bersama'], ['me', 'Bee'], ['partner', 'Boo']
 ];
+
 const dateKey = (value) => String(value || '').slice(0, 10);
 const localDateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const monthKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+const parseSortableTimestamp = (tx) => {
+  const raw = tx?.created_at;
+  if (!raw) return 0;
+  // Jika hanya format YYYY-MM-DD tanpa jam, beri jam 12:00:00 agar perbandingan zona waktu stabil
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(String(raw).trim())
+    ? `${String(raw).trim()}T12:00:00`
+    : String(raw);
+  const parsed = Date.parse(normalized);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const compareTransactionsDesc = (a, b) => {
+  const timeDiff = parseSortableTimestamp(b) - parseSortableTimestamp(a);
+  if (timeDiff !== 0) return timeDiff;
+  return Number(b?.id || 0) - Number(a?.id || 0);
+};
 
 const normalizeBudgetLimits = (storedBudgets) => Object.fromEntries(
   Object.entries(storedBudgets).map(([month, scopes]) => {
@@ -65,6 +83,7 @@ function App() {
   const [transactions, setTransactions] = useState([]);
   const [showFullHistory, setShowFullHistory] = useState(false);
   const [syncHistoryWithDashboard, setSyncHistoryWithDashboard] = useState(false);
+  const [recentHistoryFiltered, setRecentHistoryFiltered] = useState(false);
   const [showTransactionModal, setShowTransactionModal] = useState(false);
   const [toast, setToast] = useState('');
   const [pendingDelete, setPendingDelete] = useState(null);
@@ -102,7 +121,7 @@ function App() {
   const [category, setCategory] = useState('Food');
   const [transactionOwnerScope, setTransactionOwnerScope] = useState('shared');
   const [description, setDescription] = useState('');
-  const [transactionDate, setTransactionDate] = useState(new Date().toISOString().split('T')[0]);
+  const [transactionDate, setTransactionDate] = useState(localDateKey(new Date()));
   const [submitting, setSubmitting] = useState(false);
 
   const [showWishlistCrud, setShowWishlistCrud] = useState(false);
@@ -114,13 +133,11 @@ function App() {
 
   const t = { cats: CATEGORY_LABELS };
 
-  // Rekening fisik nyata (mengecualikan baris Rek Gabungan jika sempat dibuat di DB)
   const physicalWallets = useMemo(
     () => wallets.filter((wallet) => !isJointWalletRecord(wallet)),
     [wallets]
   );
 
-  // Gabungan tampilan otomatis: Dana Bee + Boo Mandiri
   const displayWallets = useMemo(() => {
     const danaBee = physicalWallets.find(isDanaBeeWallet);
     const booMandiri = physicalWallets.find(isBooMandiriWallet);
@@ -153,8 +170,15 @@ function App() {
   };
 
   const formatDateStr = (isoString) => {
-    const d = new Date(isoString);
-    return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+    if (!isoString) return '';
+    const raw = String(isoString);
+    const hasTime = raw.includes('T') || raw.includes(':');
+    const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw.trim()) ? `${raw.trim()}T12:00:00` : raw;
+    const d = new Date(normalized);
+    if (Number.isNaN(d.getTime())) return raw;
+    return hasTime
+      ? d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
   const getWalletBadge = (id) => {
@@ -195,12 +219,13 @@ function App() {
           .from('transactions')
           .select('*')
           .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
           .range(offset, offset + 999);
         if (txError) throw txError;
         allTransactions.push(...(txPage || []));
         if (!txPage || txPage.length < 1000) break;
       }
-      setTransactions(allTransactions);
+      setTransactions([...allTransactions].sort(compareTransactionsDesc));
     } catch (error) {
       console.error('Error fetching data:', error.message);
     } finally {
@@ -254,6 +279,15 @@ function App() {
         setToast('Rekening sumber dan rekening tabungan harus berbeda.');
         return;
       }
+
+      // Sertakan jam saat ini jika tanggal yang dipilih adalah hari ini
+      const now = new Date();
+      const todayStr = localDateKey(now);
+      const timeSuffix = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      const effectiveCreatedAt = transactionDate === todayStr
+        ? `${transactionDate}T${timeSuffix}`
+        : `${transactionDate}T12:00:00`;
+
       const destinationWallet = physicalWallets.find((wallet) => wallet.id === targetWalletId);
       const transactionDescription = description;
       const { error } = await supabase.rpc('record_financial_transaction', {
@@ -261,7 +295,7 @@ function App() {
         p_amount: numericAmount,
         p_transaction_type: type,
         p_category: type === TRANSACTION_TYPES.TRANSFER ? 'Transfer' : category,
-        p_created_at: transactionDate,
+        p_created_at: effectiveCreatedAt,
         p_description: type === TRANSACTION_TYPES.TRANSFER && !description
           ? `Ke ${destinationWallet?.display_name || destinationWallet?.name || 'rekening tujuan'}`
           : transactionDescription,
@@ -318,10 +352,12 @@ function App() {
 
     setSubmitting(true);
     try {
+      const now = new Date();
+      const timeSuffix = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
       const { error } = await supabase.rpc('set_wallet_balance', {
         p_wallet_id: editingWallet.id,
         p_target_balance: numericNewBalance,
-        p_created_at: localDateKey(new Date())
+        p_created_at: `${localDateKey(now)}T${timeSuffix}`
       });
       if (error) throw error;
 
@@ -390,6 +426,11 @@ function App() {
   };
 
   // --- DATA CALCULATIONS ---
+  const sortedTransactions = useMemo(
+    () => [...transactions].sort(compareTransactionsDesc),
+    [transactions]
+  );
+
   const dashboardTransactions = useMemo(() => {
     const today = new Date();
     const todayKey = localDateKey(today);
@@ -403,7 +444,7 @@ function App() {
     const danaBeeId = physicalWallets.find(isDanaBeeWallet)?.id;
     const booMandiriId = physicalWallets.find(isBooMandiriWallet)?.id;
 
-    return transactions.filter((tx) => {
+    return sortedTransactions.filter((tx) => {
       const txDate = dateKey(tx.created_at);
       const matchesWallet = dashboardWalletId === 'All'
         ? true
@@ -419,7 +460,12 @@ function App() {
       }
       return matchesWallet && matchesPeriod;
     });
-  }, [transactions, physicalWallets, dashboardWalletId, periodFilter, customStartDate, customEndDate]);
+  }, [sortedTransactions, physicalWallets, dashboardWalletId, periodFilter, customStartDate, customEndDate]);
+
+  const recentHistoryItems = useMemo(() => {
+    const source = recentHistoryFiltered ? dashboardTransactions : sortedTransactions;
+    return source.slice(0, 3);
+  }, [recentHistoryFiltered, dashboardTransactions, sortedTransactions]);
 
   const chartData = useMemo(() => {
     const totals = dashboardTransactions.reduce((acc, tx) => {
@@ -444,9 +490,9 @@ function App() {
     return { ...summary, net: summary.totalIncome - summary.totalExpense };
   }, [dashboardTransactions]);
 
-  const currentMonthTransactions = useMemo(() => transactions.filter((tx) =>
+  const currentMonthTransactions = useMemo(() => sortedTransactions.filter((tx) =>
     dateKey(tx.created_at).startsWith(monthKey()) && tx.amount < 0 && !['Transfer', 'Adjustment', 'Wishlist Savings', 'Emergency Savings'].includes(tx.category)
-  ), [transactions]);
+  ), [sortedTransactions]);
 
   const budgetRows = Object.entries(budgetLimits[monthKey()]?.[budgetScope] || {}).map(([categoryKey, limit]) => {
     const spent = currentMonthTransactions
@@ -487,14 +533,20 @@ function App() {
   const theme = isDarkMode ? darkYellowTheme : lightYellowTheme;
 
   const filteredTransactions = useMemo(() => {
-    const historySource = syncHistoryWithDashboard ? dashboardTransactions : transactions;
+    const historySource = syncHistoryWithDashboard ? dashboardTransactions : sortedTransactions;
+    const normalizedSearch = searchTerm.trim().toLowerCase();
     return historySource.filter((tx) => {
-      const matchesSearch = tx.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (t.cats[tx.category] || tx.category).toLowerCase().includes(searchTerm.toLowerCase());
+      const catText = (t.cats[tx.category] || tx.category || '').toLowerCase();
+      const descText = (tx.description || '').toLowerCase();
+      const walletText = getWalletBadge(tx.wallet_id).toLowerCase();
+      const matchesSearch = !normalizedSearch
+        || descText.includes(normalizedSearch)
+        || catText.includes(normalizedSearch)
+        || walletText.includes(normalizedSearch);
       const matchesCategory = filterCategory === 'All' || tx.category === filterCategory;
       return matchesSearch && matchesCategory;
     });
-  }, [transactions, dashboardTransactions, syncHistoryWithDashboard, searchTerm, filterCategory, t.cats]);
+  }, [sortedTransactions, dashboardTransactions, syncHistoryWithDashboard, searchTerm, filterCategory, t.cats, physicalWallets]);
 
   if (loading) {
     return (
@@ -694,24 +746,39 @@ function App() {
 
       {/* HISTORY FEED (UTAMA) */}
       <section style={styles.historySection}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', gap: '8px' }}>
           <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>📜 Riwayat Terakhir</h3>
-          {transactions.length > 0 && (
-            <button onClick={() => setShowFullHistory(true)} style={{ ...styles.manageBtn, color: theme.accent, backgroundColor: theme.inputBg, border: 'none', cursor: 'pointer' }}>
-              Lihat Semua
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={() => setRecentHistoryFiltered((prev) => !prev)}
+              style={{
+                ...styles.manageBtn,
+                color: recentHistoryFiltered ? theme.buttonText : theme.textSecondary,
+                backgroundColor: recentHistoryFiltered ? theme.accent : theme.inputBg,
+                border: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              {recentHistoryFiltered ? 'Terfilter' : 'Semua'}
             </button>
-          )}
+            {sortedTransactions.length > 0 && (
+              <button onClick={() => setShowFullHistory(true)} style={{ ...styles.manageBtn, color: theme.accent, backgroundColor: theme.inputBg, border: 'none', cursor: 'pointer' }}>
+                Lihat Semua
+              </button>
+            )}
+          </div>
         </div>
 
         <div style={styles.historyList}>
-          {transactions.slice(0, 3).map((tx) => {
+          {recentHistoryItems.map((tx) => {
             const isEmergencyAllocation = tx.category === 'Emergency Savings' && Number(tx.goal_contribution) > 0;
             const isExpense = tx.amount < 0 && !isEmergencyAllocation;
             const catLabel = t.cats[tx.category] || tx.category;
             return (
               <div key={tx.id} style={{ ...styles.historyCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
                 <div style={styles.txMeta}>
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '2px' }}>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '2px', flexWrap: 'wrap' }}>
                     <span style={{ ...styles.txCat, color: theme.textMain }}>{catLabel}</span>
                     <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', backgroundColor: theme.inputBg, color: theme.textSecondary, fontWeight: '700' }}>
                       {getWalletBadge(tx.wallet_id)}
@@ -738,7 +805,11 @@ function App() {
               </div>
             );
           })}
-          {transactions.length === 0 && <p style={{ color: theme.textSecondary, fontSize: '0.85rem', textAlign: 'center' }}>Belum ada transaksi sama sekali.</p>}
+          {recentHistoryItems.length === 0 && (
+            <p style={{ color: theme.textSecondary, fontSize: '0.85rem', textAlign: 'center' }}>
+              {recentHistoryFiltered ? 'Tidak ada transaksi pada filter dashboard saat ini.' : 'Belum ada transaksi sama sekali.'}
+            </p>
+          )}
         </div>
       </section>
 
@@ -880,7 +951,7 @@ function App() {
               <button onClick={() => setShowFullHistory(false)} style={{ ...styles.closeBtn, color: theme.textSecondary }}>✕</button>
             </div>
 
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '15px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
               <input
                 type="text" placeholder="Cari..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
                 style={{ ...styles.minimalInput, flex: 2, backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
@@ -893,6 +964,16 @@ function App() {
                 {Object.keys(t.cats).map((cat) => <option key={cat} value={cat}>{t.cats[cat]}</option>)}
               </select>
             </div>
+
+            {(searchTerm || filterCategory !== 'All') && (
+              <button
+                type="button"
+                onClick={() => { setSearchTerm(''); setFilterCategory('All'); }}
+                style={{ ...styles.manageBtn, marginBottom: '12px', color: theme.accent, backgroundColor: theme.inputBg }}
+              >
+                Reset pencarian & kategori
+              </button>
+            )}
 
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: '9px', marginBottom: '14px', color: theme.textSecondary, fontSize: '0.8rem', lineHeight: 1.4, cursor: 'pointer' }}>
               <input
@@ -911,7 +992,7 @@ function App() {
                 return (
                   <div key={tx.id} style={{ ...styles.historyCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
                     <div style={styles.txMeta}>
-                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '2px' }}>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '2px', flexWrap: 'wrap' }}>
                         <span style={{ ...styles.txCat, color: theme.textMain }}>{t.cats[tx.category] || tx.category}</span>
                         <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', backgroundColor: theme.inputBg, color: theme.textSecondary, fontWeight: '700' }}>
                           {getWalletBadge(tx.wallet_id)}
@@ -938,6 +1019,11 @@ function App() {
                   </div>
                 );
               })}
+              {filteredTransactions.length === 0 && (
+                <p style={{ color: theme.textSecondary, fontSize: '0.85rem', textAlign: 'center' }}>
+                  Tidak ada transaksi yang cocok dengan filter.
+                </p>
+              )}
             </div>
           </div>
         </div>

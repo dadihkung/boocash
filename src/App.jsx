@@ -170,7 +170,7 @@ function App() {
     localStorage.setItem('isDarkMode', isDarkMode);
   }, [isDarkMode]);
 
-  // --- NAVIGASI RINGKAS & POP-UP HEADER MENU ---
+  // --- NAVIGASI RINGKAS & MENU DROPDOWN DI TOP HEADER ---
   const [activeTab, setActiveTab] = useState('overview');
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   const [showWalletsStrip, setShowWalletsStrip] = useState(true);
@@ -757,67 +757,21 @@ function App() {
         </div>
       )}
 
-      {/* STICKY HEADER BAR + POP-UP MENU */}
+      {/* TOP BAR WITH ONLY THE MENU BUTTON */}
       <div style={{ ...styles.topNavSticky, backgroundColor: `${theme.bg}ee`, borderBottom: theme.border }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-          <button
-            type="button"
-            onClick={() => setShowHeaderMenu((prev) => !prev)}
-            style={{ ...styles.menuTriggerBtn, backgroundColor: theme.cardBg, color: theme.textMain, border: theme.border }}
-          >
-            {showHeaderMenu ? '✕ Tutup Menu' : '☰ Menu'}
-          </button>
+        <button
+          type="button"
+          onClick={() => setShowHeaderMenu((prev) => !prev)}
+          style={{ ...styles.menuTriggerBtn, backgroundColor: theme.cardBg, color: theme.textMain, border: theme.border }}
+        >
+          {showHeaderMenu ? '✕ Tutup Menu' : '☰ Menu'}
+        </button>
 
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-            <button
-              type="button"
-              onClick={() => setShowWalletsStrip((prev) => !prev)}
-              style={{ ...styles.miniPillBtn, backgroundColor: theme.inputBg, color: theme.textSecondary }}
-            >
-              {showWalletsStrip ? '💳 Sembunyi Saldo' : '💳 Saldo'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              style={{ ...styles.miniPillBtn, backgroundColor: theme.inputBg, color: theme.textMain }}
-            >
-              {isDarkMode ? '☀️' : '🌙'}
-            </button>
-          </div>
-        </div>
-
-        {/* TAB SWITCHER RINGKAS (MENGURANGI SCROLL PANJANG) */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '5px', marginTop: '8px' }}>
-          {NAV_TABS.map(([tabKey, label]) => {
-            const isSelected = activeTab === tabKey;
-            return (
-              <button
-                key={tabKey}
-                type="button"
-                onClick={() => setActiveTab(tabKey)}
-                style={{
-                  padding: '7px 6px',
-                  borderRadius: '12px',
-                  border: 'none',
-                  fontSize: '0.72rem',
-                  fontWeight: isSelected ? '800' : '600',
-                  cursor: 'pointer',
-                  backgroundColor: isSelected ? theme.accent : theme.inputBg,
-                  color: isSelected ? theme.buttonText : theme.textSecondary,
-                  whiteSpace: 'nowrap'
-                }}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* POP-UP HEADER MENU */}
+        {/* NON-MODAL DROPDOWN MENU */}
         {showHeaderMenu && (
           <div style={{ ...styles.headerPopupMenu, backgroundColor: theme.cardBg, border: theme.border }}>
             <div style={{ fontSize: '0.7rem', fontWeight: '800', color: theme.textSecondary, marginBottom: '6px', textTransform: 'uppercase' }}>
-              Navigasi Cepat
+              Halaman
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '10px' }}>
               {NAV_TABS.map(([tabKey, label]) => (
@@ -825,19 +779,31 @@ function App() {
                   key={tabKey}
                   type="button"
                   onClick={() => selectTabAndCloseMenu(tabKey)}
-                  style={{ ...styles.popupItemBtn, backgroundColor: activeTab === tabKey ? theme.accent : theme.inputBg, color: activeTab === tabKey ? theme.buttonText : theme.textMain }}
+                  style={{
+                    ...styles.popupItemBtn,
+                    backgroundColor: activeTab === tabKey ? theme.accent : theme.inputBg,
+                    color: activeTab === tabKey ? theme.buttonText : theme.textMain
+                  }}
                 >
                   {label}
                 </button>
               ))}
             </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <button
                 type="button"
-                onClick={() => { setShowHeaderMenu(false); setShowTransactionModal(true); }}
-                style={{ ...styles.popupItemBtn, backgroundColor: theme.buttonBg, color: theme.buttonText, justifyContent: 'center' }}
+                onClick={() => { setShowWalletsStrip((prev) => !prev); setShowHeaderMenu(false); }}
+                style={{ ...styles.popupItemBtn, backgroundColor: theme.inputBg, color: theme.textMain }}
               >
-                + Tambah Transaksi Baru
+                {showWalletsStrip ? '💳 Sembunyikan Daftar Saldo' : '💳 Tampilkan Daftar Saldo'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setIsDarkMode(!isDarkMode); setShowHeaderMenu(false); }}
+                style={{ ...styles.popupItemBtn, backgroundColor: theme.inputBg, color: theme.textMain }}
+              >
+                {isDarkMode ? '☀️ Mode Terang' : '🌙 Mode Gelap'}
               </button>
               <button
                 type="button"
@@ -1537,9 +1503,8 @@ const darkYellowTheme = {
 };
 
 const styles = {
-  topNavSticky: { position: 'sticky', top: 0, zIndex: 90, backdropFilter: 'blur(8px)', padding: '8px 0 10px 0', marginBottom: '8px', borderBottom: '1px solid' },
+  topNavSticky: { position: 'sticky', top: 0, zIndex: 90, backdropFilter: 'blur(8px)', padding: '8px 0', marginBottom: '8px', borderBottom: '1px solid' },
   menuTriggerBtn: { border: '1px solid', padding: '7px 12px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: '700', cursor: 'pointer' },
-  miniPillBtn: { border: 'none', padding: '6px 10px', borderRadius: '12px', fontSize: '0.72rem', fontWeight: '700', cursor: 'pointer' },
   headerPopupMenu: { position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '6px', padding: '12px', borderRadius: '18px', border: '1px solid', boxShadow: '0 12px 28px rgba(0,0,0,0.16)', zIndex: 120 },
   popupItemBtn: { display: 'flex', alignItems: 'center', gap: '6px', width: '100%', padding: '9px 11px', borderRadius: '12px', border: 'none', fontSize: '0.78rem', fontWeight: '700', cursor: 'pointer', textAlign: 'left', boxSizing: 'border-box' },
   floatingActionBtn: { position: 'fixed', right: 'max(16px, calc(50% - 194px))', bottom: 'max(18px, env(safe-area-inset-bottom))', zIndex: 95, border: 'none', borderRadius: '999px', padding: '13px 18px', fontSize: '0.88rem', fontWeight: '800', cursor: 'pointer', transition: 'transform 0.15s ease' },

@@ -28,6 +28,12 @@ const PERIOD_OPTIONS = [
 const BUDGET_SCOPES = [
   ['shared', 'Bersama'], ['me', 'Bee'], ['partner', 'Boo']
 ];
+const NAV_TABS = [
+  ['overview', '📊 Ringkasan'],
+  ['budget', '📅 Anggaran'],
+  ['wishlist', '🎯 Wishlist'],
+  ['history', '📜 Riwayat']
+];
 
 // Hari libur tetap nasional sekitar tanggal 25 (bulan 1-indexed)
 const FIXED_ANNUAL_HOLIDAYS = [
@@ -163,6 +169,11 @@ function App() {
   useEffect(() => {
     localStorage.setItem('isDarkMode', isDarkMode);
   }, [isDarkMode]);
+
+  // --- NAVIGASI RINGKAS & POP-UP HEADER MENU ---
+  const [activeTab, setActiveTab] = useState('overview');
+  const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const [showWalletsStrip, setShowWalletsStrip] = useState(true);
 
   const [wallets, setWallets] = useState([]);
   const [goals, setGoals] = useState([]);
@@ -306,7 +317,6 @@ function App() {
       return Math.round(val).toLocaleString('id-ID');
     }
     const str = String(val).trim();
-    // Jika format desimal dari DB seperti "9500210.00", ambil bagian integer sebelum titik
     const integerPart = /^\d+\.\d+$/.test(str) ? str.split('.')[0] : str;
     const clean = integerPart.replace(/\D/g, '');
     if (!clean) return '';
@@ -725,6 +735,11 @@ function App() {
     });
   }, [sortedTransactions, dashboardTransactions, syncHistoryWithDashboard, searchTerm, filterCategory, t.cats, physicalWallets]);
 
+  const selectTabAndCloseMenu = (tabKey) => {
+    setActiveTab(tabKey);
+    setShowHeaderMenu(false);
+  };
+
   if (loading) {
     return (
       <div style={{ ...styles.centerStage, backgroundColor: theme.bg, flexDirection: 'column' }}>
@@ -736,24 +751,139 @@ function App() {
 
   return (
     <div style={{ ...styles.appContainer, backgroundColor: theme.bg }}>
-      {toast && <div role="status" style={{ position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', zIndex: 1200, width: 'max-content', maxWidth: 'calc(100vw - 32px)', padding: '12px 16px', borderRadius: '12px', backgroundColor: theme.textMain, color: theme.bg, boxShadow: '0 8px 24px rgba(0,0,0,0.2)', fontSize: '0.85rem' }}>{toast}</div>}
+      {toast && (
+        <div role="status" style={{ position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', zIndex: 1300, width: 'max-content', maxWidth: 'calc(100vw - 32px)', padding: '12px 16px', borderRadius: '12px', backgroundColor: theme.textMain, color: theme.bg, boxShadow: '0 8px 24px rgba(0,0,0,0.2)', fontSize: '0.85rem' }}>
+          {toast}
+        </div>
+      )}
+
+      {/* STICKY HEADER BAR + POP-UP MENU */}
+      <div style={{ ...styles.topNavSticky, backgroundColor: `${theme.bg}ee`, borderBottom: theme.border }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+          <button
+            type="button"
+            onClick={() => setShowHeaderMenu((prev) => !prev)}
+            style={{ ...styles.menuTriggerBtn, backgroundColor: theme.cardBg, color: theme.textMain, border: theme.border }}
+          >
+            {showHeaderMenu ? '✕ Tutup Menu' : '☰ Menu'}
+          </button>
+
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={() => setShowWalletsStrip((prev) => !prev)}
+              style={{ ...styles.miniPillBtn, backgroundColor: theme.inputBg, color: theme.textSecondary }}
+            >
+              {showWalletsStrip ? '💳 Sembunyi Saldo' : '💳 Saldo'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              style={{ ...styles.miniPillBtn, backgroundColor: theme.inputBg, color: theme.textMain }}
+            >
+              {isDarkMode ? '☀️' : '🌙'}
+            </button>
+          </div>
+        </div>
+
+        {/* TAB SWITCHER RINGKAS (MENGURANGI SCROLL PANJANG) */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '5px', marginTop: '8px' }}>
+          {NAV_TABS.map(([tabKey, label]) => {
+            const isSelected = activeTab === tabKey;
+            return (
+              <button
+                key={tabKey}
+                type="button"
+                onClick={() => setActiveTab(tabKey)}
+                style={{
+                  padding: '7px 6px',
+                  borderRadius: '12px',
+                  border: 'none',
+                  fontSize: '0.72rem',
+                  fontWeight: isSelected ? '800' : '600',
+                  cursor: 'pointer',
+                  backgroundColor: isSelected ? theme.accent : theme.inputBg,
+                  color: isSelected ? theme.buttonText : theme.textSecondary,
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* POP-UP HEADER MENU */}
+        {showHeaderMenu && (
+          <div style={{ ...styles.headerPopupMenu, backgroundColor: theme.cardBg, border: theme.border }}>
+            <div style={{ fontSize: '0.7rem', fontWeight: '800', color: theme.textSecondary, marginBottom: '6px', textTransform: 'uppercase' }}>
+              Navigasi Cepat
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '10px' }}>
+              {NAV_TABS.map(([tabKey, label]) => (
+                <button
+                  key={tabKey}
+                  type="button"
+                  onClick={() => selectTabAndCloseMenu(tabKey)}
+                  style={{ ...styles.popupItemBtn, backgroundColor: activeTab === tabKey ? theme.accent : theme.inputBg, color: activeTab === tabKey ? theme.buttonText : theme.textMain }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <button
+                type="button"
+                onClick={() => { setShowHeaderMenu(false); setShowTransactionModal(true); }}
+                style={{ ...styles.popupItemBtn, backgroundColor: theme.buttonBg, color: theme.buttonText, justifyContent: 'center' }}
+              >
+                + Tambah Transaksi Baru
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowHeaderMenu(false); setShowWishlistCrud(true); resetCrudForm(); }}
+                style={{ ...styles.popupItemBtn, backgroundColor: theme.inputBg, color: theme.textMain }}
+              >
+                ⚙️ Kelola Target Wishlist
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowHeaderMenu(false); setActiveTab('budget'); setShowHolidayManager(true); }}
+                style={{ ...styles.popupItemBtn, backgroundColor: theme.inputBg, color: theme.textMain }}
+              >
+                📅 Atur Libur Siklus Gajian ({customHolidays.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowHeaderMenu(false); setShowFullHistory(true); }}
+                style={{ ...styles.popupItemBtn, backgroundColor: theme.inputBg, color: theme.textMain }}
+              >
+                🔍 Cari & Filter Semua Riwayat
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       <Header showGreeting={showGreeting} isDarkMode={isDarkMode} onToggleTheme={() => setIsDarkMode(!isDarkMode)} theme={theme} />
 
       {/* BALANCE SECTION */}
-      <WalletList
-        wallets={displayWallets}
-        theme={theme}
-        formatAmount={formatThousand}
-        onEdit={(wallet) => {
-          if (wallet.isVirtual) {
-            setToast('Rek Gabungan otomatis menjumlahkan Dana Bee + Boo Mandiri.');
-            return;
-          }
-          setEditingWallet(wallet);
-          setNewBalanceInput(formatThousand(wallet.balance));
-          setShowBalanceModal(true);
-        }}
-      />
+      {showWalletsStrip && (
+        <WalletList
+          wallets={displayWallets}
+          theme={theme}
+          formatAmount={formatThousand}
+          onEdit={(wallet) => {
+            if (wallet.isVirtual) {
+              setToast('Rek Gabungan otomatis menjumlahkan Dana Bee + Boo Mandiri.');
+              return;
+            }
+            setEditingWallet(wallet);
+            setNewBalanceInput(formatThousand(wallet.balance));
+            setShowBalanceModal(true);
+          }}
+        />
+      )}
 
       {/* MODAL EDIT SALDO */}
       {showBalanceModal && (
@@ -790,269 +920,285 @@ function App() {
         </div>
       )}
 
-      {/* DASHBOARD: SUMMARY & CHART */}
-      <section style={{ ...styles.card, backgroundColor: theme.cardBg, border: theme.border }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
-          <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Ringkasan Keuangan</h3>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <select
-              value={dashboardWalletId}
-              onChange={(e) => setDashboardWalletId(e.target.value)}
-              style={{ ...styles.minimalInput, flex: 1, padding: '6px 10px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
-            >
-              <option value="All">Semua Rekening</option>
-              {displayWallets.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.display_name || w.name}
-                </option>
-              ))}
-            </select>
-            <select
-              value={periodFilter}
-              onChange={(e) => setPeriodFilter(e.target.value)}
-              style={{ ...styles.minimalInput, width: 'auto', padding: '6px 10px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
-            >
-              {PERIOD_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          </div>
-          {periodFilter === 'custom' && (
+      {/* TAB 1: DASHBOARD RINGKASAN & CHART */}
+      {activeTab === 'overview' && (
+        <section style={{ ...styles.card, backgroundColor: theme.cardBg, border: theme.border }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
+            <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Ringkasan Keuangan</h3>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <input aria-label="Tanggal mulai" type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} style={{ ...styles.minimalInput, flex: 1, padding: '8px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }} />
-              <input aria-label="Tanggal akhir" type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} style={{ ...styles.minimalInput, flex: 1, padding: '8px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }} />
-            </div>
-          )}
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
-          <div style={{ padding: '10px', borderRadius: '12px', backgroundColor: 'rgba(22, 163, 74, 0.1)' }}>
-            <div style={{ fontSize: '0.7rem', color: theme.incomeColor, fontWeight: '700' }}>PEMASUKAN</div>
-            <div style={{ color: theme.incomeColor, fontWeight: '700', fontSize: '0.95rem' }}>+ Rp {formatThousand(monthlySummary.totalIncome)}</div>
-          </div>
-          <div style={{ padding: '10px', borderRadius: '12px', backgroundColor: 'rgba(225, 29, 72, 0.1)' }}>
-            <div style={{ fontSize: '0.7rem', color: theme.expenseColor, fontWeight: '700' }}>PENGELUARAN</div>
-            <div style={{ color: theme.expenseColor, fontWeight: '700', fontSize: '0.95rem' }}>- Rp {formatThousand(monthlySummary.totalExpense)}</div>
-          </div>
-        </div>
-        <div style={{ padding: '10px', borderRadius: '12px', backgroundColor: theme.inputBg, textAlign: 'center', marginBottom: '20px' }}>
-          <div style={{ fontSize: '0.75rem', color: theme.textSecondary, fontWeight: '700' }}>SELISIH PERIODE</div>
-          <div style={{ color: theme.textMain, fontWeight: '700', fontSize: '1.2rem' }}>Rp {formatThousand(monthlySummary.net)}</div>
-        </div>
-
-        <DashboardChart data={chartData} colors={COLORS} theme={theme} formatAmount={formatThousand} />
-      </section>
-
-      {/* ANGGARAN SIKLUS GAJIAN (TGL 25 DIPERCEPAT SAAT WEEKEND / LIBUR) */}
-      <section style={{ ...styles.card, backgroundColor: theme.cardBg, border: theme.border }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-          <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Anggaran Siklus Gajian</h3>
-          <button
-            type="button"
-            onClick={() => setShowHolidayManager((prev) => !prev)}
-            style={{ ...styles.manageBtn, backgroundColor: theme.inputBg, color: theme.textSecondary, padding: '6px 10px', fontSize: '0.72rem' }}
-          >
-            📅 Libur ({customHolidays.length})
-          </button>
-        </div>
-        <div style={{ color: theme.textSecondary, fontSize: '0.72rem', marginBottom: '10px', lineHeight: 1.4 }}>
-          Periode aktif: <strong>{formatShortDateId(paydayCycleStart)}</strong> s/d <strong>{formatShortDateId(paydayCycleEnd)}</strong>
-          <br />
-          <span style={{ opacity: 0.85 }}>Otomatis tgl 25 (dipercepat ke hari kerja jika Sabtu/Minggu/libur).</span>
-        </div>
-
-        {showHolidayManager && (
-          <div style={{ padding: '10px', borderRadius: '14px', backgroundColor: theme.inputBg, marginBottom: '12px' }}>
-            <div style={{ fontSize: '0.72rem', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>
-              Tambah Tanggal Merah / Libur Kerja
-            </div>
-            <form onSubmit={handleAddHoliday} style={{ display: 'flex', gap: '6px', marginBottom: customHolidays.length > 0 ? '8px' : 0 }}>
-              <input
-                aria-label="Tanggal libur nasional"
-                type="date"
-                value={holidayDateInput}
-                onChange={(e) => setHolidayDateInput(e.target.value)}
-                style={{ ...styles.minimalInput, flex: 1, padding: '7px 9px', fontSize: '0.75rem', backgroundColor: theme.cardBg, color: theme.textMain, borderColor: theme.border }}
-              />
-              <button type="submit" style={{ ...styles.manageBtn, backgroundColor: theme.accent, color: theme.buttonText, padding: '7px 10px', fontSize: '0.75rem' }}>
-                Tambah
-              </button>
-            </form>
-            {customHolidays.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {customHolidays.map((dateItem) => (
-                  <span key={dateItem} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.7rem', padding: '3px 8px', borderRadius: '8px', backgroundColor: theme.cardBg, color: theme.textMain }}>
-                    {formatShortDateId(dateItem)}
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveHoliday(dateItem)}
-                      style={{ background: 'none', border: 'none', color: theme.expenseColor, cursor: 'pointer', padding: 0, fontSize: '0.75rem' }}
-                    >
-                      ✕
-                    </button>
-                  </span>
+              <select
+                value={dashboardWalletId}
+                onChange={(e) => setDashboardWalletId(e.target.value)}
+                style={{ ...styles.minimalInput, flex: 1, padding: '6px 10px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
+              >
+                <option value="All">Semua Rekening</option>
+                {displayWallets.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.display_name || w.name}
+                  </option>
                 ))}
+              </select>
+              <select
+                value={periodFilter}
+                onChange={(e) => setPeriodFilter(e.target.value)}
+                style={{ ...styles.minimalInput, width: 'auto', padding: '6px 10px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}
+              >
+                {PERIOD_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </div>
+            {periodFilter === 'custom' && (
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input aria-label="Tanggal mulai" type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} style={{ ...styles.minimalInput, flex: 1, padding: '8px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }} />
+                <input aria-label="Tanggal akhir" type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} style={{ ...styles.minimalInput, flex: 1, padding: '8px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }} />
               </div>
             )}
           </div>
-        )}
 
-        <div style={{ ...styles.inputGroup, marginBottom: '10px' }}>
-          <label style={{ ...styles.label, color: theme.textSecondary }}>Anggaran untuk</label>
-          <select aria-label="Scope anggaran" value={budgetScope} onChange={(e) => setBudgetScope(e.target.value)} disabled={Boolean(editingBudgetCategory)} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}>
-            {BUDGET_SCOPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </div>
-        <form onSubmit={saveBudget} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '8px', marginBottom: '14px' }}>
-          <select aria-label="Kategori anggaran" value={budgetCategory} onChange={(e) => setBudgetCategory(e.target.value)} disabled={Boolean(editingBudgetCategory)} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.75rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}>
-            {EXPENSE_CATEGORIES.filter(([key]) => !['Wishlist Savings', 'Emergency Savings'].includes(key)).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-          </select>
-          <input aria-label="Batas anggaran rupiah" inputMode="numeric" placeholder="Batas Rp" value={budgetInput} onChange={(e) => setBudgetInput(formatThousand(e.target.value))} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.75rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }} />
-          <button type="submit" style={{ ...styles.manageBtn, backgroundColor: theme.accent, color: theme.buttonText, padding: '8px 11px' }}>{editingBudgetCategory ? 'Perbarui' : 'Simpan'}</button>
-        </form>
-        {editingBudgetCategory && (
-          <button type="button" onClick={cancelBudgetEdit} style={{ ...styles.manageBtn, marginBottom: '14px', color: theme.textSecondary, backgroundColor: theme.inputBg }}>Batal edit</button>
-        )}
-        {budgetRows.length > 0 ? (
-          <div style={{ display: 'grid', gap: '12px' }}>
-            {budgetRows.map((row) => (
-              <div key={row.category}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '0.73rem', marginBottom: '5px' }}>
-                  <span style={{ color: theme.textMain }}>{t.cats[row.category] || row.category}</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                    <span style={{ color: row.spent > row.limit ? theme.expenseColor : theme.textSecondary, whiteSpace: 'nowrap' }}>Rp {formatThousand(row.spent)} / {formatThousand(row.limit)}</span>
-                    <button type="button" aria-label={`Edit anggaran ${t.cats[row.category] || row.category}`} title="Edit anggaran" onClick={() => editBudget(row.category, row.limit)} style={{ ...styles.iconBtn, padding: '1px 3px', fontSize: '0.85rem', color: theme.accent }}>✏️</button>
-                    <button type="button" aria-label={`Hapus anggaran ${t.cats[row.category] || row.category}`} title="Hapus anggaran" onClick={() => setPendingDelete({ kind: 'budget', payload: { cycleKey: activeBudgetCycleKey, scope: budgetScope, categoryKey: row.category } })} style={{ ...styles.iconBtn, padding: '1px 3px', fontSize: '0.85rem', color: theme.expenseColor }}>🗑️</button>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '12px' }}>
+            <div style={{ padding: '10px', borderRadius: '12px', backgroundColor: 'rgba(22, 163, 74, 0.1)' }}>
+              <div style={{ fontSize: '0.7rem', color: theme.incomeColor, fontWeight: '700' }}>PEMASUKAN</div>
+              <div style={{ color: theme.incomeColor, fontWeight: '700', fontSize: '0.95rem' }}>+ Rp {formatThousand(monthlySummary.totalIncome)}</div>
+            </div>
+            <div style={{ padding: '10px', borderRadius: '12px', backgroundColor: 'rgba(225, 29, 72, 0.1)' }}>
+              <div style={{ fontSize: '0.7rem', color: theme.expenseColor, fontWeight: '700' }}>PENGELUARAN</div>
+              <div style={{ color: theme.expenseColor, fontWeight: '700', fontSize: '0.95rem' }}>- Rp {formatThousand(monthlySummary.totalExpense)}</div>
+            </div>
+          </div>
+          <div style={{ padding: '10px', borderRadius: '12px', backgroundColor: theme.inputBg, textAlign: 'center', marginBottom: '16px' }}>
+            <div style={{ fontSize: '0.75rem', color: theme.textSecondary, fontWeight: '700' }}>SELISIH PERIODE</div>
+            <div style={{ color: theme.textMain, fontWeight: '700', fontSize: '1.2rem' }}>Rp {formatThousand(monthlySummary.net)}</div>
+          </div>
+
+          <DashboardChart data={chartData} colors={COLORS} theme={theme} formatAmount={formatThousand} />
+        </section>
+      )}
+
+      {/* TAB 2: ANGGARAN SIKLUS GAJIAN (TGL 25 DIPERCEPAT SAAT WEEKEND / LIBUR) */}
+      {activeTab === 'budget' && (
+        <section style={{ ...styles.card, backgroundColor: theme.cardBg, border: theme.border }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+            <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>Anggaran Siklus Gajian</h3>
+            <button
+              type="button"
+              onClick={() => setShowHolidayManager((prev) => !prev)}
+              style={{ ...styles.manageBtn, backgroundColor: theme.inputBg, color: theme.textSecondary, padding: '6px 10px', fontSize: '0.72rem' }}
+            >
+              📅 Libur ({customHolidays.length})
+            </button>
+          </div>
+          <div style={{ color: theme.textSecondary, fontSize: '0.72rem', marginBottom: '10px', lineHeight: 1.4 }}>
+            Periode aktif: <strong>{formatShortDateId(paydayCycleStart)}</strong> s/d <strong>{formatShortDateId(paydayCycleEnd)}</strong>
+            <br />
+            <span style={{ opacity: 0.85 }}>Otomatis tgl 25 (dipercepat ke hari kerja jika Sabtu/Minggu/libur).</span>
+          </div>
+
+          {showHolidayManager && (
+            <div style={{ padding: '10px', borderRadius: '14px', backgroundColor: theme.inputBg, marginBottom: '12px' }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>
+                Tambah Tanggal Merah / Libur Kerja
+              </div>
+              <form onSubmit={handleAddHoliday} style={{ display: 'flex', gap: '6px', marginBottom: customHolidays.length > 0 ? '8px' : 0 }}>
+                <input
+                  aria-label="Tanggal libur nasional"
+                  type="date"
+                  value={holidayDateInput}
+                  onChange={(e) => setHolidayDateInput(e.target.value)}
+                  style={{ ...styles.minimalInput, flex: 1, padding: '7px 9px', fontSize: '0.75rem', backgroundColor: theme.cardBg, color: theme.textMain, borderColor: theme.border }}
+                />
+                <button type="submit" style={{ ...styles.manageBtn, backgroundColor: theme.accent, color: theme.buttonText, padding: '7px 10px', fontSize: '0.75rem' }}>
+                  Tambah
+                </button>
+              </form>
+              {customHolidays.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {customHolidays.map((dateItem) => (
+                    <span key={dateItem} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.7rem', padding: '3px 8px', borderRadius: '8px', backgroundColor: theme.cardBg, color: theme.textMain }}>
+                      {formatShortDateId(dateItem)}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveHoliday(dateItem)}
+                        style={{ background: 'none', border: 'none', color: theme.expenseColor, cursor: 'pointer', padding: 0, fontSize: '0.75rem' }}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ ...styles.inputGroup, marginBottom: '10px' }}>
+            <label style={{ ...styles.label, color: theme.textSecondary }}>Anggaran untuk</label>
+            <select aria-label="Scope anggaran" value={budgetScope} onChange={(e) => setBudgetScope(e.target.value)} disabled={Boolean(editingBudgetCategory)} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.8rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}>
+              {BUDGET_SCOPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </div>
+          <form onSubmit={saveBudget} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '8px', marginBottom: '14px' }}>
+            <select aria-label="Kategori anggaran" value={budgetCategory} onChange={(e) => setBudgetCategory(e.target.value)} disabled={Boolean(editingBudgetCategory)} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.75rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }}>
+              {EXPENSE_CATEGORIES.filter(([key]) => !['Wishlist Savings', 'Emergency Savings'].includes(key)).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
+            <input aria-label="Batas anggaran rupiah" inputMode="numeric" placeholder="Batas Rp" value={budgetInput} onChange={(e) => setBudgetInput(formatThousand(e.target.value))} style={{ ...styles.minimalInput, padding: '9px', fontSize: '0.75rem', backgroundColor: theme.inputBg, color: theme.textMain, borderColor: theme.border }} />
+            <button type="submit" style={{ ...styles.manageBtn, backgroundColor: theme.accent, color: theme.buttonText, padding: '8px 11px' }}>{editingBudgetCategory ? 'Perbarui' : 'Simpan'}</button>
+          </form>
+          {editingBudgetCategory && (
+            <button type="button" onClick={cancelBudgetEdit} style={{ ...styles.manageBtn, marginBottom: '14px', color: theme.textSecondary, backgroundColor: theme.inputBg }}>Batal edit</button>
+          )}
+          {budgetRows.length > 0 ? (
+            <div style={{ display: 'grid', gap: '12px' }}>
+              {budgetRows.map((row) => (
+                <div key={row.category}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '0.73rem', marginBottom: '5px' }}>
+                    <span style={{ color: theme.textMain }}>{t.cats[row.category] || row.category}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                      <span style={{ color: row.spent > row.limit ? theme.expenseColor : theme.textSecondary, whiteSpace: 'nowrap' }}>Rp {formatThousand(row.spent)} / {formatThousand(row.limit)}</span>
+                      <button type="button" aria-label={`Edit anggaran ${t.cats[row.category] || row.category}`} title="Edit anggaran" onClick={() => editBudget(row.category, row.limit)} style={{ ...styles.iconBtn, padding: '1px 3px', fontSize: '0.85rem', color: theme.accent }}>✏️</button>
+                      <button type="button" aria-label={`Hapus anggaran ${t.cats[row.category] || row.category}`} title="Hapus anggaran" onClick={() => setPendingDelete({ kind: 'budget', payload: { cycleKey: activeBudgetCycleKey, scope: budgetScope, categoryKey: row.category } })} style={{ ...styles.iconBtn, padding: '1px 3px', fontSize: '0.85rem', color: theme.expenseColor }}>🗑️</button>
+                    </div>
+                  </div>
+                  <div style={{ height: '7px', borderRadius: '8px', overflow: 'hidden', backgroundColor: theme.inputBg }}>
+                    <div style={{ height: '100%', width: `${row.percent}%`, backgroundColor: row.spent > row.limit ? theme.expenseColor : theme.incomeColor, borderRadius: '8px' }} />
                   </div>
                 </div>
-                <div style={{ height: '7px', borderRadius: '8px', overflow: 'hidden', backgroundColor: theme.inputBg }}>
-                  <div style={{ height: '100%', width: `${row.percent}%`, backgroundColor: row.spent > row.limit ? theme.expenseColor : theme.incomeColor, borderRadius: '8px' }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : <p style={{ color: theme.textSecondary, fontSize: '0.8rem' }}>Belum ada batas anggaran untuk {BUDGET_SCOPES.find(([value]) => value === budgetScope)?.[1].toLowerCase()} di siklus gajian ini. Pilih kategori dan tentukan batasnya.</p>}
-      </section>
+              ))}
+            </div>
+          ) : <p style={{ color: theme.textSecondary, fontSize: '0.8rem' }}>Belum ada batas anggaran untuk {BUDGET_SCOPES.find(([value]) => value === budgetScope)?.[1].toLowerCase()} di siklus gajian ini. Pilih kategori dan tentukan batasnya.</p>}
+        </section>
+      )}
 
+      {/* TAB 3: WISHLIST SECTION (TERKUMPUL DARI TABUNGAN BLU BCA MASING-MASING) */}
+      {activeTab === 'wishlist' && (
+        <section style={styles.wishlistSection}>
+          <div style={styles.wishlistHeaderRow}>
+            <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>🎯 Target Wishlist Kita</h3>
+            <button onClick={() => { setShowWishlistCrud(true); resetCrudForm(); }} style={{ ...styles.manageBtn, color: theme.accent, backgroundColor: theme.inputBg }}>
+              ⚙️ Kelola
+            </button>
+          </div>
+          <div style={styles.goalsGrid}>
+            {goals.map((goal) => {
+              const effectiveSaved = getEffectiveGoalSaved(goal);
+              const targetVal = Math.max(0, parseBalanceNumber(goal.target_amount));
+              const pct = targetVal > 0 ? Math.min(Math.round((effectiveSaved / targetVal) * 100), 100) : 0;
+              const linkedWalletLabel = isAyoNikahGoal(goal) && beeBluWallet
+                ? (beeBluWallet.display_name || beeBluWallet.name)
+                : isRenovasiRumahGoal(goal) && booBluWallet
+                  ? (booBluWallet.display_name || booBluWallet.name)
+                  : null;
+
+              return (
+                <div key={goal.id} style={{ ...styles.goalCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
+                  <div style={styles.goalInfoRow}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <span style={{ ...styles.goalName, color: theme.textMain }}>{goal.item_name}</span>
+                      {linkedWalletLabel && (
+                        <span style={{ fontSize: '0.68rem', color: theme.textSecondary }}>
+                          Rekening: {linkedWalletLabel}
+                        </span>
+                      )}
+                    </div>
+                    <span style={{ ...styles.goalPct, color: theme.accent }}>{pct}%</span>
+                  </div>
+                  <div style={{ ...styles.progressTrack, backgroundColor: theme.inputBg }}>
+                    <div style={{ ...styles.progressBar, width: `${pct}%`, backgroundColor: theme.accent }} />
+                  </div>
+                  <div style={styles.goalAmountRow}>
+                    <span style={{ color: theme.textSecondary }}>Rp {Number(effectiveSaved).toLocaleString('id-ID')}</span>
+                    <span style={{ color: theme.textSecondary, opacity: 0.6 }}>target: Rp {Number(targetVal).toLocaleString('id-ID')}</span>
+                  </div>
+                </div>
+              );
+            })}
+            {goals.length === 0 && <p style={{ color: theme.textSecondary, fontSize: '0.85rem', textAlign: 'center' }}>Belum ada target impian nih, yuk buat!</p>}
+          </div>
+        </section>
+      )}
+
+      {/* TAB 4: HISTORY FEED */}
+      {activeTab === 'history' && (
+        <section style={styles.historySection}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', gap: '8px' }}>
+            <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>📜 Riwayat Terakhir</h3>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={() => setRecentHistoryFiltered((prev) => !prev)}
+                style={{
+                  ...styles.manageBtn,
+                  color: recentHistoryFiltered ? theme.buttonText : theme.textSecondary,
+                  backgroundColor: recentHistoryFiltered ? theme.accent : theme.inputBg,
+                  border: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                {recentHistoryFiltered ? 'Terfilter' : 'Semua'}
+              </button>
+              {sortedTransactions.length > 0 && (
+                <button onClick={() => setShowFullHistory(true)} style={{ ...styles.manageBtn, color: theme.accent, backgroundColor: theme.inputBg, border: 'none', cursor: 'pointer' }}>
+                  Lihat Semua
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div style={styles.historyList}>
+            {recentHistoryItems.map((tx) => {
+              const isEmergencyAllocation = tx.category === 'Emergency Savings' && Number(tx.goal_contribution) > 0;
+              const isExpense = tx.amount < 0 && !isEmergencyAllocation;
+              const catLabel = t.cats[tx.category] || tx.category;
+              return (
+                <div key={tx.id} style={{ ...styles.historyCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
+                  <div style={styles.txMeta}>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '2px', flexWrap: 'wrap' }}>
+                      <span style={{ ...styles.txCat, color: theme.textMain }}>{catLabel}</span>
+                      <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', backgroundColor: theme.inputBg, color: theme.textSecondary, fontWeight: '700' }}>
+                        {getWalletBadge(tx.wallet_id)}
+                      </span>
+                    </div>
+                    {tx.description && <span style={{ ...styles.txDesc, color: theme.textSecondary }}>{tx.description}</span>}
+                    <span style={{ fontSize: '0.7rem', color: theme.textSecondary, marginTop: '2px' }}>{formatDateStr(tx.created_at)}</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                    <span style={{ ...styles.txAmount, color: isExpense ? theme.expenseColor : theme.incomeColor }}>
+                      {isEmergencyAllocation
+                        ? `Alokasi Rp ${Number(tx.goal_contribution).toLocaleString('id-ID')}`
+                        : `${isExpense ? '- ' : '+ '}Rp ${Number(Math.abs(tx.amount)).toLocaleString('id-ID')}`}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={deletingTxId === tx.id}
+                      onClick={() => setPendingDelete({ kind: 'transaction', payload: tx })}
+                      style={{ background: 'none', border: 'none', color: theme.expenseColor, fontSize: '0.75rem', cursor: 'pointer', padding: 0 }}
+                    >
+                      {deletingTxId === tx.id ? 'Menghapus...' : '🗑️ Hapus'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {recentHistoryItems.length === 0 && (
+              <p style={{ color: theme.textSecondary, fontSize: '0.85rem', textAlign: 'center' }}>
+                {recentHistoryFiltered ? 'Tidak ada transaksi pada filter dashboard saat ini.' : 'Belum ada transaksi sama sekali.'}
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* FLOATING ACTION BUTTON: + TAMBAH TRANSAKSI */}
       <button
+        type="button"
+        aria-label="Tambah Transaksi"
         onClick={() => setShowTransactionModal(true)}
-        style={{ ...styles.submitBtn, backgroundColor: theme.accent, color: theme.buttonText, marginBottom: '24px', boxShadow: `0 4px 14px ${theme.accent}40` }}
+        style={{
+          ...styles.floatingActionBtn,
+          backgroundColor: theme.accent,
+          color: theme.buttonText,
+          boxShadow: `0 8px 24px ${theme.accent}66`
+        }}
       >
         + Tambah Transaksi
       </button>
-
-      {/* WISHLIST SECTION (TERKUMPUL DARI TABUNGAN BLU BCA MASING-MASING) */}
-      <section style={styles.wishlistSection}>
-        <div style={styles.wishlistHeaderRow}>
-          <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>🎯 Target Wishlist Kita</h3>
-          <button onClick={() => { setShowWishlistCrud(true); resetCrudForm(); }} style={{ ...styles.manageBtn, color: theme.accent, backgroundColor: theme.inputBg }}>
-            ⚙️ Kelola
-          </button>
-        </div>
-        <div style={styles.goalsGrid}>
-          {goals.map((goal) => {
-            const effectiveSaved = getEffectiveGoalSaved(goal);
-            const targetVal = Math.max(0, parseBalanceNumber(goal.target_amount));
-            const pct = targetVal > 0 ? Math.min(Math.round((effectiveSaved / targetVal) * 100), 100) : 0;
-            const linkedWalletLabel = isAyoNikahGoal(goal) && beeBluWallet
-              ? (beeBluWallet.display_name || beeBluWallet.name)
-              : isRenovasiRumahGoal(goal) && booBluWallet
-                ? (booBluWallet.display_name || booBluWallet.name)
-                : null;
-
-            return (
-              <div key={goal.id} style={{ ...styles.goalCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
-                <div style={styles.goalInfoRow}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    <span style={{ ...styles.goalName, color: theme.textMain }}>{goal.item_name}</span>
-                    {linkedWalletLabel && (
-                      <span style={{ fontSize: '0.68rem', color: theme.textSecondary }}>
-                        Rekening: {linkedWalletLabel}
-                      </span>
-                    )}
-                  </div>
-                  <span style={{ ...styles.goalPct, color: theme.accent }}>{pct}%</span>
-                </div>
-                <div style={{ ...styles.progressTrack, backgroundColor: theme.inputBg }}>
-                  <div style={{ ...styles.progressBar, width: `${pct}%`, backgroundColor: theme.accent }} />
-                </div>
-                <div style={styles.goalAmountRow}>
-                  <span style={{ color: theme.textSecondary }}>Rp {Number(effectiveSaved).toLocaleString('id-ID')}</span>
-                  <span style={{ color: theme.textSecondary, opacity: 0.6 }}>target: Rp {Number(targetVal).toLocaleString('id-ID')}</span>
-                </div>
-              </div>
-            );
-          })}
-          {goals.length === 0 && <p style={{ color: theme.textSecondary, fontSize: '0.85rem', textAlign: 'center' }}>Belum ada target impian nih, yuk buat!</p>}
-        </div>
-      </section>
-
-      {/* HISTORY FEED (UTAMA) */}
-      <section style={styles.historySection}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', gap: '8px' }}>
-          <h3 style={{ ...styles.sectionTitle, color: theme.textMain, margin: 0 }}>📜 Riwayat Terakhir</h3>
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-            <button
-              type="button"
-              onClick={() => setRecentHistoryFiltered((prev) => !prev)}
-              style={{
-                ...styles.manageBtn,
-                color: recentHistoryFiltered ? theme.buttonText : theme.textSecondary,
-                backgroundColor: recentHistoryFiltered ? theme.accent : theme.inputBg,
-                border: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              {recentHistoryFiltered ? 'Terfilter' : 'Semua'}
-            </button>
-            {sortedTransactions.length > 0 && (
-              <button onClick={() => setShowFullHistory(true)} style={{ ...styles.manageBtn, color: theme.accent, backgroundColor: theme.inputBg, border: 'none', cursor: 'pointer' }}>
-                Lihat Semua
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div style={styles.historyList}>
-          {recentHistoryItems.map((tx) => {
-            const isEmergencyAllocation = tx.category === 'Emergency Savings' && Number(tx.goal_contribution) > 0;
-            const isExpense = tx.amount < 0 && !isEmergencyAllocation;
-            const catLabel = t.cats[tx.category] || tx.category;
-            return (
-              <div key={tx.id} style={{ ...styles.historyCard, backgroundColor: theme.cardBg, borderColor: theme.border }}>
-                <div style={styles.txMeta}>
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '2px', flexWrap: 'wrap' }}>
-                    <span style={{ ...styles.txCat, color: theme.textMain }}>{catLabel}</span>
-                    <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', backgroundColor: theme.inputBg, color: theme.textSecondary, fontWeight: '700' }}>
-                      {getWalletBadge(tx.wallet_id)}
-                    </span>
-                  </div>
-                  {tx.description && <span style={{ ...styles.txDesc, color: theme.textSecondary }}>{tx.description}</span>}
-                  <span style={{ fontSize: '0.7rem', color: theme.textSecondary, marginTop: '2px' }}>{formatDateStr(tx.created_at)}</span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
-                  <span style={{ ...styles.txAmount, color: isExpense ? theme.expenseColor : theme.incomeColor }}>
-                    {isEmergencyAllocation
-                      ? `Alokasi Rp ${Number(tx.goal_contribution).toLocaleString('id-ID')}`
-                      : `${isExpense ? '- ' : '+ '}Rp ${Number(Math.abs(tx.amount)).toLocaleString('id-ID')}`}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={deletingTxId === tx.id}
-                    onClick={() => setPendingDelete({ kind: 'transaction', payload: tx })}
-                    style={{ background: 'none', border: 'none', color: theme.expenseColor, fontSize: '0.75rem', cursor: 'pointer', padding: 0 }}
-                  >
-                    {deletingTxId === tx.id ? 'Menghapus...' : '🗑️ Hapus'}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-          {recentHistoryItems.length === 0 && (
-            <p style={{ color: theme.textSecondary, fontSize: '0.85rem', textAlign: 'center' }}>
-              {recentHistoryFiltered ? 'Tidak ada transaksi pada filter dashboard saat ini.' : 'Belum ada transaksi sama sekali.'}
-            </p>
-          )}
-        </div>
-      </section>
 
       {/* MODAL TRANSAKSI UTAMA */}
       {showTransactionModal && (
@@ -1391,6 +1537,12 @@ const darkYellowTheme = {
 };
 
 const styles = {
+  topNavSticky: { position: 'sticky', top: 0, zIndex: 90, backdropFilter: 'blur(8px)', padding: '8px 0 10px 0', marginBottom: '8px', borderBottom: '1px solid' },
+  menuTriggerBtn: { border: '1px solid', padding: '7px 12px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: '700', cursor: 'pointer' },
+  miniPillBtn: { border: 'none', padding: '6px 10px', borderRadius: '12px', fontSize: '0.72rem', fontWeight: '700', cursor: 'pointer' },
+  headerPopupMenu: { position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '6px', padding: '12px', borderRadius: '18px', border: '1px solid', boxShadow: '0 12px 28px rgba(0,0,0,0.16)', zIndex: 120 },
+  popupItemBtn: { display: 'flex', alignItems: 'center', gap: '6px', width: '100%', padding: '9px 11px', borderRadius: '12px', border: 'none', fontSize: '0.78rem', fontWeight: '700', cursor: 'pointer', textAlign: 'left', boxSizing: 'border-box' },
+  floatingActionBtn: { position: 'fixed', right: 'max(16px, calc(50% - 194px))', bottom: 'max(18px, env(safe-area-inset-bottom))', zIndex: 95, border: 'none', borderRadius: '999px', padding: '13px 18px', fontSize: '0.88rem', fontWeight: '800', cursor: 'pointer', transition: 'transform 0.15s ease' },
   card: { padding: '20px', borderRadius: '24px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)', marginBottom: '20px' },
   minimalInput: { width: '100%', padding: '14px', borderRadius: '16px', fontSize: '0.95rem', outline: 'none', boxSizing: 'border-box' },
   submitBtn: { width: '100%', padding: '16px', borderRadius: '16px', border: 'none', fontSize: '1rem', fontWeight: '700', cursor: 'pointer', transition: 'transform 0.2s, opacity 0.2s' },
@@ -1398,7 +1550,7 @@ const styles = {
   historyCard: { padding: '16px', borderRadius: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', border: '1px solid' },
   centerStage: { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontFamily: '-apple-system, sans-serif' },
   loadingSpinner: { fontSize: '1.2rem', fontWeight: '600' },
-  appContainer: { maxWidth: '420px', margin: '0 auto', padding: '12px 16px 32px 16px', minHeight: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', boxSizing: 'border-box', position: 'relative' },
+  appContainer: { maxWidth: '420px', margin: '0 auto', padding: '6px 16px 88px 16px', minHeight: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', boxSizing: 'border-box', position: 'relative' },
   utilityBar: { display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' },
   utilBtn: { border: 'none', padding: '6px 12px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer' },
   header: { textAlign: 'center', marginBottom: '24px' },
